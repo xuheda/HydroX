@@ -2,7 +2,7 @@
 
 HydroX is a software-in-the-loop (SITL) flight-control runtime for marine and cross-domain autonomy. It provides navigation, guidance, control, allocation, and MAVLink HIL interfaces for vehicles running in simulation or on embedded platforms.
 
-This repository contains the HydroX autopilot core only. It is designed to be built standalone and can be integrated with simulators such as OceanX via MAVLink HIL.
+This repository contains the HydroX autopilot core. It is designed to be built standalone and can be integrated with simulators such as OceanX via the MAVLink HIL protocol.
 
 ## Features
 
@@ -18,32 +18,16 @@ This repository contains the HydroX autopilot core only. It is designed to be bu
 | Path | Role |
 |---|---|
 | `include/` | Public headers |
-| `src/` | Core implementation |
-| `src/sitl/` | SITL-specific runtime |
-| `src/transport/` | MAVLink / serial / TCP transports |
+| `src/` | Core library implementation |
+| `src/sitl/` | SITL-specific runtime code |
+| `src/transport/` | MAVLink / serial / TCP transport implementations |
+| `apps/sitl/` | SITL executable entry point |
+| `apps/stm32/` | STM32 embedded executable entry point |
 | `tests/` | Unit tests |
 | `cmake/` | CMake toolchain files |
-| `third_party/` | External dependencies (Eigen) |
+| `third_party/` | External dependencies (Eigen, downloaded manually) |
 
 ## Build
-
-### Windows
-
-```bat
-build_sitl.bat
-```
-
-To also deploy the built executable to an external runtime directory:
-
-```bat
-build_sitl.bat hydrox_sitl C:\Path\To\Runtime\Dir
-```
-
-### Linux
-
-```bash
-bash build_sitl.sh
-```
 
 ### Dependencies
 
@@ -76,7 +60,7 @@ git clone --depth 1 --branch 3.4.0 \
 build_sitl.bat
 ```
 
-To also deploy the built executable to an external runtime directory:
+To also deploy the built executable to an external runtime directory (for example, next to the OceanX packaged runtime):
 
 ```bat
 build_sitl.bat hydrox_sitl C:\Path\To\Runtime\Dir
@@ -88,7 +72,13 @@ build_sitl.bat hydrox_sitl C:\Path\To\Runtime\Dir
 bash build_sitl.sh
 ```
 
-Micro XRCE-DDS Client is downloaded automatically by CMake via `FetchContent` on the first build.
+### STM32 (cross-compile)
+
+```bash
+mkdir build_stm32 && cd build_stm32
+cmake .. -DCMAKE_TOOLCHAIN_FILE=../cmake/toolchain_stm32h7.cmake -DHYDROX_TARGET=STM32
+cmake --build . -j$(nproc)
+```
 
 ## Run Tests
 
@@ -101,8 +91,12 @@ ctest -C Release --output-on-failure
 
 ## Integration with OceanX
 
-HydroX is developed as part of the OceanX simulator ecosystem. When built from within the OceanX workspace, the `build_sitl.bat` script can deploy `hydrox_sitl.exe` next to the packaged Unreal runtime. Standalone builds produce the executable under `build_sitl/Release/`.
+HydroX is developed as part of the OceanX simulator ecosystem. When built from within the OceanX workspace, `build_sitl.bat` can deploy `hydrox_sitl.exe` next to the packaged Unreal runtime. Standalone builds produce the executable under `build_sitl/Release/`.
+
+HydroX and OceanX communicate exclusively through the MAVLink HIL protocol, so either project can be developed and tested independently.
 
 ## License
 
-See [LICENSE](LICENSE).
+HydroX is licensed under the Apache License 2.0. See [LICENSE](LICENSE).
+
+Third-party licenses are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
