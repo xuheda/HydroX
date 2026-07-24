@@ -30,21 +30,29 @@ endif()
 # ---------------------------------------------------------------------------
 # Third-party libraries (header-only)
 # ---------------------------------------------------------------------------
-# Eigen: Clone to third_party/eigen
-#   git clone --depth 1 https://gitlab.com/libeigen/eigen.git third_party/eigen
+# Eigen: Clone to third_party/eigen before building.
+#   git clone --depth 1 --branch 3.4.0 \
+#       https://gitlab.com/libeigen/eigen.git third_party/eigen
+# For users in China, a gitee mirror can be used:
+#   git clone --depth 1 --branch 3.4.0 \
+#       https://gitee.com/mirrors/eigen.git third_party/eigen
 set(EIGEN3_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/third_party/eigen")
 if(NOT EXISTS "${EIGEN3_INCLUDE_DIR}/Eigen/Core")
   message(FATAL_ERROR
-    "Eigen not found. Please run:\n"
-    "  git clone --depth 1 https://gitlab.com/libeigen/eigen.git "
-    "${CMAKE_SOURCE_DIR}/third_party/eigen")
+    "Eigen not found. Please run one of the following commands\n"
+    "from the project root before building:\n"
+    "  git clone --depth 1 --branch 3.4.0 "
+    "https://gitlab.com/libeigen/eigen.git third_party/eigen\n"
+    "or, for users in China:\n"
+    "  git clone --depth 1 --branch 3.4.0 "
+    "https://gitee.com/mirrors/eigen.git third_party/eigen")
 endif()
 
 # ---------------------------------------------------------------------------
 # Micro XRCE-DDS Client (Cross-platform: Windows / Linux / STM32)
-# Automatically downloaded via FetchContent, no manual installation required.
-# This UDP profile is for DDS/XRCE telemetry in PC SITL. The MAVLink HIL
-# simulator link remains the explicit TCP transport below.
+# Automatically downloaded via FetchContent. If your network cannot reach
+# GitHub, clone the repositories manually into third_party/ and adjust the
+# FetchContent_Declare calls below, or set FETCHCONTENT_FULLY_DISCONNECTED.
 # ---------------------------------------------------------------------------
 include(FetchContent)
 set(UCDR_SUPERBUILD        OFF CACHE BOOL "" FORCE)

@@ -49,12 +49,46 @@ bash build_sitl.sh
 
 - CMake 3.16+
 - C++17 compiler (Visual Studio 2022 on Windows, GCC/Clang on Linux)
-- Eigen3 (clone to `third_party/eigen`):
-  ```bash
-  git clone --depth 1 https://gitlab.com/libeigen/eigen.git third_party/eigen
-  ```
+- Eigen 3.4+ (clone manually before building, see below)
+- A network connection for the first build (Micro XRCE-DDS is downloaded automatically by CMake)
 
-Micro XRCE-DDS Client is downloaded automatically by CMake via FetchContent.
+### Get Eigen
+
+Before building HydroX, clone Eigen into `third_party/eigen`:
+
+```bash
+git clone --depth 1 --branch 3.4.0 \
+    https://gitlab.com/libeigen/eigen.git \
+    third_party/eigen
+```
+
+For users in China, use the gitee mirror:
+
+```bash
+git clone --depth 1 --branch 3.4.0 \
+    https://gitee.com/mirrors/eigen.git \
+    third_party/eigen
+```
+
+### Windows
+
+```bat
+build_sitl.bat
+```
+
+To also deploy the built executable to an external runtime directory:
+
+```bat
+build_sitl.bat hydrox_sitl C:\Path\To\Runtime\Dir
+```
+
+### Linux
+
+```bash
+bash build_sitl.sh
+```
+
+Micro XRCE-DDS Client is downloaded automatically by CMake via `FetchContent` on the first build.
 
 ## Run Tests
 

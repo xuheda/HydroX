@@ -1,19 +1,38 @@
-﻿# 第三方依赖说明
+# Third-party dependencies
 
-本项目依赖以下纯 header-only 库，需在此目录下手动克隆：
+HydroX uses the following third-party libraries:
 
-## Eigen（线性代数）
+| Library | Purpose | Management |
+|---|---|---|
+| [Eigen](https://eigen.tuxfamily.org/) | Header-only linear algebra | **Manual clone** into `third_party/eigen` |
+| [Micro-CDR](https://github.com/eProsima/Micro-CDR) | CDR serialization for XRCE-DDS | CMake `FetchContent` |
+| [Micro-XRCE-DDS-Client](https://github.com/eProsima/Micro-XRCE-DDS-Client) | DDS/XRCE client transport | CMake `FetchContent` |
+
+## Eigen
+
+Eigen must be cloned manually before building HydroX:
 
 ```bash
-# 在 HydroX/ 根目录执行
-git clone --depth=1 --branch 3.4.0 \
+git clone --depth 1 --branch 3.4.0 \
     https://gitlab.com/libeigen/eigen.git \
     third_party/eigen
 ```
 
-克隆后路径应为：`third_party/eigen/Eigen/Core`
+For users in China:
 
-## 构建验证
+```bash
+git clone --depth 1 --branch 3.4.0 \
+    https://gitee.com/mirrors/eigen.git \
+    third_party/eigen
+```
+
+The `third_party/eigen/` directory is ignored by Git so it is not committed to the HydroX repository.
+
+## Micro XRCE-DDS
+
+Micro-CDR and Micro-XRCE-DDS-Client are downloaded automatically by CMake on the first configure. If your build environment cannot reach GitHub, you may need to configure a proxy or clone the repositories manually and adjust the `FetchContent_Declare` calls in `CMakeLists.txt`.
+
+## Build verification
 
 ```bash
 cd HydroX
@@ -23,7 +42,7 @@ cmake --build . -j$(nproc)
 ./hydrox_sitl --ue5-port 14600
 ```
 
-## 交叉编译（STM32H7）
+## Cross-compilation (STM32H7)
 
 ```bash
 mkdir build_stm32 && cd build_stm32
@@ -31,4 +50,4 @@ cmake .. -DCMAKE_TOOLCHAIN_FILE=../cmake/toolchain_stm32h7.cmake
 cmake --build . -j4
 ```
 
-需要安装 `arm-none-eabi-gcc`（推荐 ARM GNU 12.3+）。
+Requires `arm-none-eabi-gcc` (ARM GNU 12.3+ recommended).
