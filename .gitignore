@@ -22,3 +22,6 @@ Thumbs.db
 
 # third_party (must be cloned separately)
 third_party/eigen/
+
+# Localized README (Chinese version is not uploaded)
+README_CN.md
