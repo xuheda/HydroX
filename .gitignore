@@ -1,0 +1,24 @@
+# Build outputs
+build_sitl/
+*.exe
+*.pdb
+*.ilk
+*.obj
+*.o
+
+# Python
+cmake_install.cmake
+CMakeCache.txt
+CMakeFiles/
+
+# IDE
+.vs/
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# third_party (must be cloned separately)
+third_party/eigen/
