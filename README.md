@@ -1,185 +1,321 @@
-# HydroX
+<a id="hydrox"></a>
 
-HydroX is a software-in-the-loop (SITL) flight-control runtime for marine and cross-domain autonomy. It provides navigation, guidance, control, allocation, and MAVLink HIL interfaces for vehicles running in simulation or on embedded platforms.
+<div align="center">
+<img src="docs/assets/hydrox-hero-v2.png" alt="HydroX coordinated underwater, surface, and aerial vehicle concept" width="100%">
 
-This repository contains the HydroX autopilot core. It is designed to be built standalone and can be integrated with simulators such as OceanX via the MAVLink HIL protocol.
+<h1>HydroX</h1>
 
-```mermaid
-graph LR
-    UE5[OceanX / UE5 Simulator] <-->|MAVLink HIL| HydroX[HydroX SITL]
-    HydroX <-->|Micro XRCE-DDS| ROS[ROS 2 / QGC / Mission System]
-```
+<p><strong>Ocean-First, Cross-Domain Autopilot for Underwater, Surface, and Aerial Vehicles</strong></p>
 
-## Features
+<p>
+A unified control and allocation architecture · Six vehicle archetypes · Designed for SIL, HIL, and real-world deployment
+</p>
 
-- Fossen-style 6-DOF marine dynamics and vehicle parameter models
-- EKF-based state estimation
-- Multi-domain controllers: AUV, ROV, surface vessel, multirotor, fixed-wing, VTOL
-- MAVLink HIL sensor and actuator interfaces
-- Micro XRCE-DDS client for ROS 2 / mission-system integration
-- Extensive unit-test coverage
+<p>
+<a href="https://isocpp.org/"><img alt="C++ 17" src="https://img.shields.io/badge/C%2B%2B-17-00599C?style=flat-square&logo=cplusplus&logoColor=white"></a>
+<a href="https://cmake.org/"><img alt="CMake 3.16 or newer" src="https://img.shields.io/badge/CMake-%E2%89%A53.16-064F8C?style=flat-square&logo=cmake&logoColor=white"></a>
+<img alt="MAVLink HIL" src="https://img.shields.io/badge/Interface-MAVLink%20HIL-4B8BBE?style=flat-square">
+<img alt="ROS 2 integration" src="https://img.shields.io/badge/Integration-ROS%202-22314E?style=flat-square&logo=ros&logoColor=white">
+<a href="LICENSE"><img alt="Apache License 2.0" src="https://img.shields.io/badge/License-Apache--2.0-D22128?style=flat-square"></a>
+</p>
 
-## GNC Pipeline
+<p>
+<a href="#overview">Overview</a> ·
+<a href="#architecture">Architecture</a> ·
+<a href="#vehicle-coverage">Vehicles</a> ·
+<a href="#integration-contract">Integration</a> ·
+<a href="#quick-start">Quick Start</a>
+</p>
+<sub>Concept visualization of a coordinated fleet spanning underwater, surface, and aerial vehicles.</sub>
 
-```mermaid
-graph TD
-    Sensors[HIL_SENSOR / HIL_GPS / HIL_DVL] --> Adapter[SensorAdapter]
-    Adapter --> EKF[EKF State Estimation]
-    EKF --> State[AUVState]
-    State --> Controller[IController]
-    Controller --> Wrench[Wrench 6-DOF]
-    Wrench --> Allocator[IAllocator]
-    Allocator --> Actuators[ActuatorCmd]
-    Actuators --> Motors[MotorModel]
-    Motors --> HIL[HIL_ACTUATOR_CONTROLS]
-    HIL --> UE5
-```
+</div>
 
-## Supported Vehicle Domains
+---
 
-HydroX ships with controllers and allocators for:
+## Overview
 
-| Domain | Vehicle | Control Style |
+HydroX is a standalone, open-source C++17 autopilot implementation for underwater, surface, and aerial vehicles. It implements the complete GNC path from sensor processing and state estimation to guidance, control, allocation, actuator output, telemetry, and logging.
+
+HydroX uses the same GNC core for software-in-the-loop (SIL), hardware-in-the-loop (HIL), and onboard deployment, with platform-specific interfaces handling sensors, actuators, and communications.
+
+> [!NOTE]
+> A shared state, control, and actuator contract keeps the estimator, controller, and allocator chain consistent across development, validation, and deployment.
+
+### At a glance
+
+| | Engineering focus | What HydroX provides |
 |---|---|---|
-| Underwater | Slender-body AUV | Cross-tail fins + propeller |
-| Underwater | ROV / AUV | Thruster array (6-DOF) |
-| Surface | USV / WAMV | Dual propellers |
-| Air | Multirotor | Quad-rotor thrust mixing |
-| Air | Fixed-wing | Elevator / aileron / rudder / throttle |
-| Air | VTOL | Lift rotors + control surfaces + pusher |
+| 🧭 | **Navigation** | An 18-state aided EKF for IMU, DVL, GPS, depth, and heading observations |
+| 🎛️ | **Control** | Vehicle-specific control laws behind a common <code>IController</code> interface |
+| ⚙️ | **Allocation** | A clean six-degree-of-freedom wrench boundary between control and actuators |
+| 🚀 | **Vehicle coverage** | Controllers and allocators for underwater vehicles, surface vessels, multirotors, fixed-wing aircraft, and VTOL aircraft |
+| 🌊 | **Marine vehicle modeling** | Fossen-based vehicle control parameters for underwater vehicles and surface vessels |
+| 🔌 | **Integration** | MAVLink HIL over TCP, Micro XRCE-DDS over UDP, and MAVLink telemetry for QGroundControl |
+| 📈 | **Observability** | XLog time-series recording plus focused tests for estimation, allocation, transport, and serialization |
 
-## EKF State Estimation
+## Architecture
 
-An 18-state mixed-mode aided EKF fuses IMU, DVL, GPS, depth, and compass measurements:
+### One control chain, multiple domains
 
-```mermaid
-graph LR
-    IMU[IMU] --> EKF
-    DVL[DVL bottom/water track] --> EKF
-    GPS[GPS position/velocity] --> EKF
-    Depth[Depth] --> EKF
-    Compass[Magnetometer / truth heading] --> EKF
-    EKF --> State["AUVState<br/>[N,E,D, roll,pitch,yaw, u,v,w, biases, current]"]
-```
+<p align="center">
+<img src="docs/assets/gnc-pipeline.svg" alt="HydroX GNC pipeline from sensors through navigation, control, allocation, and actuators" width="100%">
+</p>
 
-State vector:
+HydroX separates **what forces and moments the vehicle needs** from **how its actuators produce them**. Every controller emits a six-degree-of-freedom wrench; a vehicle-specific allocator then maps that demand to fins, propellers, thrusters, rotors, or control surfaces.
 
-```text
-[N, E, D, roll, pitch, yaw, u, v, w, b_ax, b_ay, b_az, b_gx, b_gy, b_gz, c_N, c_E, c_D]
-```
+That boundary keeps the estimator and GNC orchestration stable while vehicle geometry and actuator layouts change.
 
-## DDS / ROS 2 Integration
+~~~text
+Sensor frames
+    → SensorAdapter
+    → 18-state aided EKF
+    → vehicle state
+    → IController
+    → 6-DOF force / moment demand
+    → IAllocator
+    → normalized actuator commands
+    → actuator / transport interface
+~~~
 
-```mermaid
-graph LR
-    HydroX -->|publish telemetry| Pub[DdsPublisher]
-    Sub[DdsSubscriber] -->|setpoint| HydroX
-    Pub -->|UDP XRCE| Agent[MicroXRCEAgent]
-    Agent <-->|DDS| ROS[ROS 2 topics]
-```
+### Integration topology
 
-Key topics include `/vehicle_local_position`, `/sensor_combined`, `/actuator_outputs`, `/vehicle_status`, and `/setpoint`. See [`include/dds_topic_manifest.h`](include/dds_topic_manifest.h) for the full list.
+~~~mermaid
+flowchart LR
+    SIL["SIL environment"]
+    HIL["HIL bench"]
+    REAL["Onboard computer"]
+    HX["HydroX<br/>Autopilot"]
+    AGENT["Micro XRCE-DDS Agent"]
+    ROS["ROS 2 / mission application"]
+    QGC["QGroundControl"]
+    LOG["XLog recorder"]
 
-## Repository Layout
+    SIL <-->|"simulation I/O"| HX
+    HIL <-->|"MAVLink HIL / hardware I/O"| HX
+    REAL <-->|"platform I/O"| HX
+    HX <-->|"telemetry + setpoint · UDP"| AGENT
+    AGENT <-->|"DDS"| ROS
+    HX -->|"MAVLink telemetry · UDP"| QGC
+    HX -->|"binary time series"| LOG
 
-| Path | Role |
+    classDef core fill:#0a3048,stroke:#34d6ff,color:#ffffff,stroke-width:2px;
+    classDef edge fill:#102334,stroke:#54768d,color:#ffffff;
+    class HX core;
+    class SIL,HIL,REAL,AGENT,ROS,QGC,LOG edge;
+~~~
+
+HydroX runs the same estimation, control, and allocation chain across SIL, HIL, and onboard environments. Each environment connects through the transport and platform interface appropriate to that deployment.
+
+ROS 2 applications exchange telemetry, actuator outputs, and GNC setpoints through an external Micro XRCE-DDS Agent. QGroundControl receives a separate, one-way MAVLink/UDP telemetry stream.
+
+### Navigation core
+
+The aided EKF estimates NED position, Euler attitude, body-frame velocity, IMU biases, and NED current velocity. It accepts IMU propagation together with available DVL bottom/water track, GPS, depth, and heading observations.
+
+<details>
+<summary><strong>18-state vector</strong></summary>
+
+~~~text
+[N, E, D,
+ roll, pitch, yaw,
+ u, v, w,
+ b_ax, b_ay, b_az,
+ b_gx, b_gy, b_gz,
+ c_N, c_E, c_D]
+~~~
+
+</details>
+
+## Vehicle coverage
+
+HydroX provides controller and allocator implementations for six vehicle archetypes. This describes software coverage, not flight certification or completed hardware validation.
+
+| Domain | Vehicle archetype | Actuation / control allocation |
+|---|---|---|
+| Underwater | Slender-body AUV | Cross-tail fins and propeller |
+| Underwater | Thruster ROV / hovering AUV | Multi-thruster six-DOF allocation |
+| Surface | USV / WAM-V | Differential twin-propeller control |
+| Aerial | Multirotor | Quad-rotor thrust mixing |
+| Aerial | Fixed-wing | Elevator, aileron, rudder, and throttle |
+| Aerial | VTOL | Lift rotors, control surfaces, and pusher |
+
+## Execution modes
+
+| Mode | How HydroX runs | Primary interfaces |
+|---|---|---|
+| **SIL** | The PC executable closes the control loop with a simulated vehicle | TCP MAVLink HIL and ROS 2 integration |
+| **HIL** | The same control loop exchanges sensor and actuator data with a hardware bench | MAVLink HIL and the transport abstraction |
+| **Real-world deployment** | The GNC core runs on an onboard computer with platform I/O | Static library, embedded target, UART, and platform adapters |
+
+The default SIL control loop is configured for **100 Hz**. This is a configurable rate, not a hard real-time guarantee.
+
+## Interfaces
+
+| Peer | Transport | Direction | Default | Purpose |
+|---|---|---|---|---|
+| Simulator or adapter | MAVLink HIL over TCP | Bidirectional | <code>127.0.0.1:14600</code> | Sensor frames in; actuator controls out |
+| Micro XRCE-DDS Agent | XRCE-DDS over UDP | Bidirectional | <code>127.0.0.1:8888</code> | ROS 2 telemetry and GNC setpoints |
+| QGroundControl | MAVLink over UDP | HydroX → QGC | <code>255.255.255.255:14550</code> | Attitude, position, HUD, and system telemetry |
+| XLog | Local binary file | HydroX → log | Configurable | Estimator, setpoint, control, allocation, and diagnostic records |
+
+The ROS 2 topic namespace is vehicle-aware. See [<code>include/dds_topic_manifest.h</code>](include/dds_topic_manifest.h) for the authoritative topic names, directions, rates, and message types.
+
+> [!IMPORTANT]
+> HydroX publishes state and actuator data through DDS and subscribes to high-level GNC setpoints. Simulation and hardware integrations can bridge their native topics or I/O to the HydroX transport and message contracts.
+
+## Integration contract
+
+HydroX keeps the autopilot loop separate from the simulation or hardware endpoint. An integration only needs to exchange sensor data and actuator commands through the contracts below.
+
+### MAVLink HIL endpoint
+
+The SIL process opens a TCP connection to the configured MAVLink HIL endpoint. By default, it connects to <code>127.0.0.1:14600</code> and runs the control loop at 100 Hz.
+
+| Direction | Required message | Purpose |
+|---|---|---|
+| Endpoint → HydroX | <code>HIL_SENSOR</code> | Required IMU and pressure data for estimator propagation |
+| Endpoint → HydroX | <code>HIL_GPS</code> | Optional position and velocity aid |
+| Endpoint → HydroX | <code>HIL_DVL</code> | Optional DVL body velocity aid; HydroX extension, message ID 11060 |
+| HydroX → endpoint | <code>HIL_ACTUATOR_CONTROLS</code> | Normalized actuator commands for the simulated or physical plant |
+
+The endpoint should apply each actuator command to its vehicle model or I/O layer, then return the next sensor sample. <code>HIL_SENSOR</code> is the minimum input required to advance the control loop.
+
+### ROS 2 and DDS bridge
+
+An optional Micro XRCE-DDS Agent exposes the autopilot to ROS 2. HydroX publishes vehicle state, sensor summaries, actuator outputs, and status under <code>/hydrox/&lt;vehicle&gt;/out/...</code>, and receives high-level GNC setpoints from <code>/hydrox/&lt;vehicle&gt;/in/setpoint</code>.
+
+For a ROS 2 based simulator or hardware integration, a bridge node can map native sensor topics to the MAVLink HIL input contract and map HydroX actuator outputs to the native actuator interface. The complete topic names, message types, directions, and rates are defined in [<code>include/dds_topic_manifest.h</code>](include/dds_topic_manifest.h).
+
+## Quick start
+
+### Prerequisites
+
+- Git
+- CMake 3.16 or newer
+- A C++17 compiler
+  - Windows: Visual Studio 2022 recommended
+  - Linux: GCC or Clang, plus OpenSSL development files
+- Eigen 3.4
+- Network access during the first configure so CMake can fetch Micro-CDR and Micro XRCE-DDS Client
+
+### 1. Clone HydroX and prepare Eigen
+
+~~~bash
+git clone https://github.com/xuheda/HydroX.git
+cd HydroX
+
+git clone --depth 1 --branch 3.4.0 \
+  https://gitlab.com/libeigen/eigen.git \
+  third_party/eigen
+~~~
+
+If GitLab is slow or unavailable in your region:
+
+~~~bash
+git clone --depth 1 --branch 3.4.0 \
+  https://gitee.com/mirrors/eigen.git \
+  third_party/eigen
+~~~
+
+### 2. Build the SIL executable
+
+#### Windows
+
+~~~powershell
+.\build_sil.bat
+~~~
+
+Output:
+
+~~~text
+build_sil\Release\hydrox_sil.exe
+~~~
+
+#### Linux
+
+~~~bash
+bash build_sil.sh
+~~~
+
+Output:
+
+~~~text
+build_sil_linux/hydrox_sil
+~~~
+
+### 3. Run
+
+Start a simulation or HIL endpoint first, then launch HydroX:
+
+~~~powershell
+.\build_sil\Release\hydrox_sil.exe
+~~~
+
+~~~bash
+./build_sil_linux/hydrox_sil
+~~~
+
+The default endpoints are the MAVLink HIL connection at <code>127.0.0.1:14600</code>, the Micro XRCE-DDS Agent at <code>127.0.0.1:8888</code>, and the QGroundControl broadcast port at <code>14550</code>. These endpoints are configurable at launch.
+
+To deploy the Windows SIL executable beside an external integration runtime:
+
+~~~powershell
+.\build_sil.bat hydrox_sil C:\Path\To\Runtime\Dir
+~~~
+
+### 4. Build and run tests
+
+Windows:
+
+~~~powershell
+cmake --build build_sil --config Release
+ctest --test-dir build_sil -C Release --output-on-failure
+~~~
+
+Linux:
+
+~~~bash
+cmake --build build_sil_linux --parallel
+ctest --test-dir build_sil_linux --output-on-failure
+~~~
+
+The test suite covers EKF behavior, control allocation, DDS/CDR serialization, connection state, sensor adaptation, MAVLink signing, SIL configuration, logging, and transport helpers.
+
+## Build targets
+
+| Target | Role |
 |---|---|
-| `include/` | Public headers |
-| `src/` | Core library implementation |
-| `src/sitl/` | SITL-specific runtime code |
-| `src/transport/` | MAVLink / serial / TCP transport implementations |
-| `src/gnc/` | Controllers and allocators |
-| `apps/sitl/` | SITL executable entry point |
-| `apps/stm32/` | STM32 embedded executable entry point |
-| `tests/` | Unit tests |
-| `cmake/` | CMake toolchain files |
-| `third_party/` | External dependencies (Eigen, downloaded manually) |
-| `docs/` | Project documentation |
+| <code>hydrox</code> | Reusable static GNC library |
+| <code>hydrox_sil</code> | Windows/Linux SIL reference executable |
+| <code>hydrox_pixhawk6c</code> | STM32H7 / Pixhawk 6C embedded deployment target |
 
-## Build
+> [!NOTE]
+> Embedded deployments reuse the same GNC core through the platform adapter layer. Board-specific HAL, RTOS, watchdog, UART, and startup integration are supplied by the target platform.
 
-### Dependencies
+## Project map
 
-- CMake 3.16+
-- C++17 compiler (Visual Studio 2022 on Windows, GCC/Clang on Linux)
-- Eigen 3.4+ (clone manually before building, see below)
-- A network connection for the first build (Micro XRCE-DDS is downloaded automatically by CMake)
+| Path | Responsibility |
+|---|---|
+| [<code>include/</code>](include/) | Public interfaces, state types, estimator, and transport contracts |
+| [<code>src/</code>](src/) | Core library implementation |
+| [<code>src/gnc/</code>](src/gnc/) | Controllers, control allocators, reference models, and factory |
+| [<code>src/sil/</code>](src/sil/) | SIL configuration, platform support, DDS worker, and XLog integration |
+| [<code>src/transport/</code>](src/transport/) | TCP and UART transport implementations |
+| [<code>apps/sil/</code>](apps/sil/) | <code>hydrox_sil</code> entry point and 100 Hz control orchestration |
+| [<code>apps/stm32/</code>](apps/stm32/) | Embedded deployment entry point |
+| [<code>tests/</code>](tests/) | Focused unit tests |
+| [<code>docs/</code>](docs/) | Architecture notes and project assets |
 
-### Get Eigen
+## Documentation
 
-Before building HydroX, clone Eigen into `third_party/eigen`:
+- [Codebase overview](docs/codebase_overview.md): module boundaries and control flow
+- [DDS topic manifest](include/dds_topic_manifest.h): authoritative ROS 2 / DDS interface contract
+- [Third-party notices](THIRD_PARTY_NOTICES.md): dependency licenses and attribution
 
-```bash
-git clone --depth 1 --branch 3.4.0 \
-    https://gitlab.com/libeigen/eigen.git \
-    third_party/eigen
-```
+## Contributing
 
-For users in China, use the gitee mirror:
-
-```bash
-git clone --depth 1 --branch 3.4.0 \
-    https://gitee.com/mirrors/eigen.git \
-    third_party/eigen
-```
-
-### Windows
-
-```bat
-build_sitl.bat
-```
-
-To also deploy the built executable to an external runtime directory (for example, next to the OceanX packaged runtime):
-
-```bat
-build_sitl.bat hydrox_sitl C:\Path\To\Runtime\Dir
-```
-
-### Linux
-
-```bash
-bash build_sitl.sh
-```
-
-### STM32 (cross-compile)
-
-```bash
-mkdir build_stm32 && cd build_stm32
-cmake .. -DCMAKE_TOOLCHAIN_FILE=../cmake/toolchain_stm32h7.cmake -DHYDROX_TARGET=STM32
-cmake --build . -j$(nproc)
-```
-
-## Run Tests
-
-After building:
-
-```bat
-cd build_sitl
-ctest -C Release --output-on-failure
-```
-
-## Integration with OceanX
-
-HydroX is developed as part of the OceanX simulator ecosystem. When built from within the OceanX workspace, `build_sitl.bat` can deploy `hydrox_sitl.exe` next to the packaged Unreal runtime. Standalone builds produce the executable under `build_sitl/Release/`.
-
-HydroX and OceanX communicate exclusively through the MAVLink HIL protocol, so either project can be developed and tested independently.
-
-```mermaid
-sequenceDiagram
-    participant UE as OceanX / UE5
-    participant HydroX as HydroX SITL
-    participant ROS as ROS 2 / QGC
-    loop 100 Hz Control Loop
-        UE->>HydroX: HIL_SENSOR / HIL_GPS / HIL_DVL
-        HydroX->>HydroX: EKF + Controller + Allocator
-        HydroX->>UE: HIL_ACTUATOR_CONTROLS
-        HydroX->>ROS: DDS telemetry
-        ROS->>HydroX: DDS setpoint
-    end
-```
+Issues and pull requests are welcome. When adding a new vehicle archetype, keep control-law logic behind <code>IController</code>, actuator mapping behind <code>IAllocator</code>, and extend the relevant tests with the implementation.
 
 ## License
 
-HydroX is licensed under the Apache License 2.0. See [LICENSE](LICENSE).
-
-Third-party licenses are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+HydroX is released under the [Apache License 2.0](LICENSE). Third-party components are documented in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
