@@ -1,5 +1,8 @@
 #include "sitl_config.h"
+#include "geodesy.h"
 
+#include <algorithm>
+#include <cctype>
 #include <stdexcept>
 
 namespace hydrox::sitl
@@ -56,6 +59,8 @@ Config parse_config(int argc, char *argv[])
             config.vehicle = value;
         else if (key == "--vehicle-type")
             config.vehicle_type = value;
+        else if (key == "--vehicle-bundle")
+            config.vehicle_bundle = value;
         else if (key == "--vehicle-params")
             config.vehicle_params = value;
         else if (key == "--vehicle-params-dir")
@@ -64,8 +69,6 @@ Config parse_config(int argc, char *argv[])
             config.ekf_accel = value;
         else if (key == "--xlog")
             config.xlog = value;
-        else if (key == "--time-mode")
-            config.time_mode = value;
         else if (key == "--mavlink-signing-key-file")
             config.mavlink_signing_key_file = value;
         else if (key == "--mavlink-signing-link-id")
@@ -81,6 +84,16 @@ Config parse_config(int argc, char *argv[])
             config.publish_truth_state = parse_bool(value);
         else if (key == "--allow-truth-heading-aid")
             config.allow_truth_heading_aid = parse_bool(value);
+        else if (key == "--control-feedback-source")
+        {
+            if (!try_parse_control_feedback_source(
+                    value,
+                    config.control_feedback_source))
+            {
+                throw std::invalid_argument(
+                    "--control-feedback-source must be 'estimated_state' or 'truth_debug'");
+            }
+        }
         else if (key == "--rate")
             config.rate_hz = std::stoi(value);
         else if (key == "--mode")
@@ -99,20 +112,33 @@ Config parse_config(int argc, char *argv[])
             config.mission_radius = std::stod(value);
         else if (key == "--mission-timeout")
             config.mission_timeout_s = std::stod(value);
+        else if (key == "--gps-projection")
+            config.gps_projection = value;
         else if (key == "--gps-origin-lat-deg")
             config.gps_origin_lat_deg = std::stod(value);
         else if (key == "--gps-origin-lon-deg")
             config.gps_origin_lon_deg = std::stod(value);
-        else if (key == "--gps-origin-alt-m")
-            config.gps_origin_alt_m = std::stod(value);
+        else if (key == "--gps-origin-alt-msl-m")
+            config.gps_origin_altitude_msl_m = std::stod(value);
+        else if (key == "--gps-max-radius-m")
+            config.gps_max_radius_m = std::stod(value);
         else
             throw std::invalid_argument("unknown SITL option: " + key);
     }
 
     if (config.rate_hz <= 0)
         throw std::out_of_range("--rate must be greater than zero");
-    if (config.time_mode != "hil" && config.time_mode != "wall")
-        throw std::invalid_argument("--time-mode must be 'hil' or 'wall'");
+    if (config.gps_projection != geodesy::kProjectionId)
+        throw std::invalid_argument(
+            "--gps-projection must be wgs84-aeqd-v1");
+    const geodesy::Wgs84AeqdFrame gps_frame{
+        config.gps_origin_lat_deg,
+        config.gps_origin_lon_deg,
+        config.gps_origin_altitude_msl_m,
+        config.gps_max_radius_m};
+    if (!geodesy::is_valid(gps_frame))
+        throw std::out_of_range(
+            "GPS origin and --gps-max-radius-m must define a valid WGS-84 AEQD frame");
     return config;
 }
 
@@ -167,6 +193,46 @@ const char *accel_mode_name(AccelMode mode)
     case AccelMode::Auto:
     default:
         return "auto";
+    }
+}
+
+bool try_parse_control_feedback_source(
+    const std::string &value,
+    ControlFeedbackSource &out_source)
+{
+    std::string normalized = value;
+    std::transform(
+        normalized.begin(),
+        normalized.end(),
+        normalized.begin(),
+        [](unsigned char ch)
+        {
+            return static_cast<char>(std::tolower(ch));
+        });
+    std::replace(normalized.begin(), normalized.end(), '-', '_');
+
+    if (normalized == "estimated_state" || normalized == "ekf")
+    {
+        out_source = ControlFeedbackSource::EstimatedState;
+        return true;
+    }
+    if (normalized == "truth_debug")
+    {
+        out_source = ControlFeedbackSource::TruthDebug;
+        return true;
+    }
+    return false;
+}
+
+const char *control_feedback_source_name(ControlFeedbackSource source)
+{
+    switch (source)
+    {
+    case ControlFeedbackSource::TruthDebug:
+        return "truth_debug";
+    case ControlFeedbackSource::EstimatedState:
+    default:
+        return "estimated_state";
     }
 }
 

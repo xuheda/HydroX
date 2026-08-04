@@ -11,20 +11,20 @@
  *     HEARTBEAT         (0)
  *
  *   Output (fc -> HIL Bridge):
- *     HIL_ACTUATOR_CONTROLS (93) PX4-style normalized simulator actuator outputs
+ *     HIL_ACTUATOR_CONTROLS (93) Normalized simulator actuator outputs
  *     HEARTBEAT         (0)     1Hz Heartbeat
  *
  * Does not depend on pymavlink / mavlink C library, pure handwritten minimal implementation.
  * CRC: CRC-16/MCRF4XX + CRC_EXTRA (consistent with PX4).
  */
 #include "mavlink_signing.h"
+#include "hydrox/runtime/fixed_vector.h"
 #include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <optional>
-#include <unordered_map>
 #include <vector>
 
 namespace hydrox
@@ -47,6 +47,11 @@ namespace hydrox
     constexpr uint32_t MSGID_HIL_PASSIVE_SONAR = 11062; // Custom OceanX sensor
     constexpr uint32_t MSGID_HIL_ACOUSTIC_NEIGHBORS = 11063; // Custom OceanX sensor
     constexpr uint32_t MSGID_HIL_RANGEFINDER_SCAN = 11064; // Custom OceanX sensor
+    constexpr size_t MAVLINK_MAX_PAYLOAD_LEN = 255;
+    constexpr size_t MAVLINK_MAX_PACKET_LEN =
+        10 + MAVLINK_MAX_PAYLOAD_LEN + 2 + MAVLINK_SIGNATURE_BLOCK_LEN;
+    constexpr size_t HIL_MAX_ACOUSTIC_CONTACTS = 4;
+    constexpr size_t HIL_MAX_RANGEFINDER_RAYS = 48;
 
     /** In-place HIL_DVL (11060) schema. There is no legacy payload fallback. */
     constexpr size_t HIL_DVL_PAYLOAD_LEN = 26;
@@ -90,7 +95,7 @@ namespace hydrox
         uint8_t fix_type = 0;           // 0=None, 3=3D
         int32_t lat = 0;                // deg x 1e7
         int32_t lon = 0;                // deg x 1e7
-        int32_t alt = 0;                // mm (ellipsoidal height)
+        int32_t alt = 0;                // mm above mean sea level (MAVLink common.xml)
         uint16_t eph = 0xFFFFu;         // horizontal accuracy, cm; 0xFFFF unknown
         uint16_t epv = 0xFFFFu;         // vertical accuracy, cm; 0xFFFF unknown
         uint16_t vel = 0xFFFFu;         // ground speed, cm/s; 0xFFFF unknown
@@ -159,7 +164,7 @@ namespace hydrox
         float depth_m = 0.0f;
         float position_ned[3] = {};
         float velocity_ned[3] = {};
-        float attitude_rpy[3] = {};
+        float yaw_ned_rad = 0.0f;
         float payload[3] = {};
         bool valid = false;
     };
@@ -168,7 +173,8 @@ namespace hydrox
     {
         uint64_t time_usec = 0;
         uint32_t receiver_id = 0;
-        std::vector<HilAcousticContactMsg> contacts;
+        runtime::FixedVector<HilAcousticContactMsg,
+                             HIL_MAX_ACOUSTIC_CONTACTS> contacts;
     };
 
     struct HilRangeFinderScanMsg
@@ -176,7 +182,7 @@ namespace hydrox
         uint64_t time_usec = 0;
         uint32_t ray_count = 0;
         float max_range_m = 0.0f;
-        std::vector<float> ranges_m;
+        runtime::FixedVector<float, HIL_MAX_RANGEFINDER_RAYS> ranges_m;
         bool valid = false;
     };
 
@@ -195,7 +201,18 @@ namespace hydrox
         uint8_t sysid = 0;
         uint8_t compid = 0;
         bool signed_frame = false;
-        std::vector<uint8_t> payload;
+        runtime::FixedVector<uint8_t, MAVLINK_MAX_PAYLOAD_LEN> payload;
+    };
+
+    struct MavlinkPacket
+    {
+        std::array<uint8_t, MAVLINK_MAX_PACKET_LEN> bytes{};
+        size_t length = 0;
+
+        const uint8_t *data() const noexcept { return bytes.data(); }
+        uint8_t *data() noexcept { return bytes.data(); }
+        size_t size() const noexcept { return length; }
+        bool empty() const noexcept { return length == 0; }
     };
 
     // Encoder and Decoder
@@ -210,6 +227,11 @@ namespace hydrox
         // Receive: byte stream -> frame list
         /** Feed bytes, returns completely parsed frames (could be empty). */
         std::vector<MavFrame> feed(const uint8_t *data, size_t len);
+
+        using FrameVisitor = void (*)(void *context, const MavFrame &frame);
+        /** Heap-free receive API for embedded supervisors. */
+        void feed_each(const uint8_t *data, size_t len,
+                       void *context, FrameVisitor visitor);
 
         /** Parse various messages from frame payload */
         HeartbeatMsg parse_heartbeat(const MavFrame &f) const;
@@ -228,9 +250,17 @@ namespace hydrox
             uint64_t time_usec = 0,
             uint8_t mode = 0,
             uint64_t flags = 0) const;
+        bool encode_hil_actuator_controls(
+            MavlinkPacket &packet,
+            const std::array<float, 8> &controls,
+            uint64_t time_usec = 0,
+            uint8_t mode = 0,
+            uint64_t flags = 0) const;
 
         /** HEARTBEAT (0) */
         std::vector<uint8_t> encode_heartbeat(uint8_t mav_type = 12) const;
+        bool encode_heartbeat(MavlinkPacket &packet,
+                              uint8_t mav_type = 12) const;
 
         /** SYS_STATUS (1) — QGC health indicator + battery display */
         std::vector<uint8_t> encode_sys_status(
@@ -275,14 +305,24 @@ namespace hydrox
         mutable uint8_t _seq = 0;
         MavlinkSigningConfig _signing;
         mutable uint64_t _tx_signing_timestamp = 0;
-        std::unordered_map<uint32_t, uint64_t> _last_rx_timestamps;
+        struct ReplayStream
+        {
+            uint32_t id = 0;
+            uint64_t timestamp = 0;
+            bool used = false;
+        };
+        std::array<ReplayStream, 8> _last_rx_timestamps{};
 
-        std::vector<uint8_t> _buf; // Receive buffer
+        runtime::FixedVector<uint8_t, MAVLINK_MAX_PACKET_LEN> _buf;
 
         std::optional<MavFrame> _parse_one();
         std::vector<uint8_t> _encode_frame(uint32_t msg_id,
                                            const uint8_t *payload,
                                            size_t payload_len) const;
+        bool _encode_frame(MavlinkPacket &packet,
+                           uint32_t msg_id,
+                           const uint8_t *payload,
+                           size_t payload_len) const;
         bool _validate_signed_frame(
             const uint8_t *packet,
             size_t packet_len_without_signature,

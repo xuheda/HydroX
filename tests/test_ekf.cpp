@@ -9,6 +9,7 @@
  *   4. Under actual roll tilt, leveling pulls the estimated attitude towards ground truth (roll is observable).
  *   5. Magnetometer heading aid pulls yaw towards magnetic north when mag is available.
  *   6. Water-track DVL plus GPS ground velocity estimates NED current without treating water speed as ground speed.
+ *   7. Platform profiles select distinct covariance and environmental-state policies.
  */
 #include "ekf.h"
 
@@ -92,12 +93,12 @@ int main()
     // ── 1. Static and Level: Zero Drift ────────────────────────────────────────────────
     {
         EKF ekf;
-        hydrox::AUVState init = hydrox::AUVState::zeros();
+        hydrox::NavigationState init = hydrox::NavigationState::zeros();
         ekf.reset(init);
 
         auto dvl = zero_dvl();
         const auto meas = navigation_measurements(kLevelAccel, true, kZeroOmega, dvl);
-        hydrox::AUVState s;
+        hydrox::NavigationState s;
         for (int i = 0; i < 2000; ++i) // 20 s @ 100 Hz
         {
             dvl.timestamp = static_cast<double>(i + 1) * 0.01;
@@ -117,11 +118,11 @@ int main()
     // ── 2. Missing Specific Force -> Kinematic Degradation, No Divergence ───────────────────────────────────
     {
         EKF ekf;
-        ekf.reset(hydrox::AUVState::zeros());
+        ekf.reset(hydrox::NavigationState::zeros());
         auto dvl = zero_dvl();
         const auto meas = navigation_measurements(Eigen::Vector3d::Zero(), false,
                                                   kZeroOmega, dvl);
-        hydrox::AUVState s;
+        hydrox::NavigationState s;
         for (int i = 0; i < 1000; ++i)
         {
             dvl.timestamp = static_cast<double>(i + 1) * 0.01;
@@ -136,11 +137,11 @@ int main()
     // ── 3. Vertical Accelerometer Bias Observable (Converges Under DVL Velocity Aiding) ─────────────────────
     {
         EKF ekf;
-        hydrox::AUVState init = hydrox::AUVState::zeros();
+        hydrox::NavigationState init = hydrox::NavigationState::zeros();
         init.nu[0] = 1.0;
         ekf.reset(init);
         const auto meas = navigation_measurements(kLevelAccel, true, kZeroOmega, no_dvl);
-        hydrox::AUVState s;
+        hydrox::NavigationState s;
         for (int i = 0; i < 100; ++i)
             s = ekf.update(meas, no_dvl, no_water_dvl, no_gps, 0.01);
 
@@ -154,7 +155,7 @@ int main()
     // so we choose the z-axis — it does not couple with attitude in a level state, and converges cleanly under velocity aiding.
     {
         EKF ekf;
-        ekf.reset(hydrox::AUVState::zeros());
+        ekf.reset(hydrox::NavigationState::zeros());
         auto dvl = zero_dvl();
         // Actually static, but IMU has a +0.2 m/s² bias on the z-axis -> reading = ground truth + bias
         const Eigen::Vector3d biased = kLevelAccel + Eigen::Vector3d(0.0, 0.0, 0.2);
@@ -173,7 +174,7 @@ int main()
     // ── 4. Under Roll Tilt, Leveling Pulls Attitude Towards Ground Truth ─────────────────────────────
     {
         EKF ekf;
-        ekf.reset(hydrox::AUVState::zeros());
+        ekf.reset(hydrox::NavigationState::zeros());
         auto dvl = zero_dvl();
         // Actually static, roll = +10 deg: body frame specific force = -R_nb^T g_n
         const double roll = 10.0 * kPi / 180.0;
@@ -182,7 +183,7 @@ int main()
         const Eigen::Vector3d accel_roll(0.0, -EKF_G * std::sin(roll),
                                          -EKF_G * std::cos(roll));
         const auto meas = navigation_measurements(accel_roll, true, kZeroOmega, dvl);
-        hydrox::AUVState s;
+        hydrox::NavigationState s;
         for (int i = 0; i < 6000; ++i)
         {
             dvl.timestamp = static_cast<double>(i + 1) * 0.01;
@@ -198,14 +199,14 @@ int main()
     // 5. Magnetometer Heading Aid
     {
         EKF ekf;
-        hydrox::AUVState init = hydrox::AUVState::zeros();
+        hydrox::NavigationState init = hydrox::NavigationState::zeros();
         init.eta[5] = 30.0 * kPi / 180.0;
         ekf.reset(init);
         auto dvl = zero_dvl();
         const Eigen::Vector3d mag_body(25.0, 0.0, 43.301270189);
         const std::optional<Eigen::Vector3d> mag = mag_body;
         const auto meas = navigation_measurements(kLevelAccel, true, kZeroOmega, dvl, mag);
-        hydrox::AUVState s;
+        hydrox::NavigationState s;
         for (int i = 0; i < 1000; ++i)
         {
             dvl.timestamp = static_cast<double>(i + 1) * 0.01;
@@ -221,15 +222,22 @@ int main()
     // signs in the water-relative measurement model.
     {
         EKF::Params params;
-        params.q_current = 1.0e-6;
-        params.r_water_dvl = 1.0e-4;
+        params.q_medium_velocity = 1.0e-6;
+        params.r_relative_medium_velocity = 1.0e-4;
         params.r_gps_velocity = 1.0e-4;
-        params.current_valid_std = 0.5;
+        params.medium_velocity_valid_std = 0.5;
         EKF ekf(params);
 
-        hydrox::AUVState init = hydrox::AUVState::zeros();
+        hydrox::NavigationState init = hydrox::NavigationState::zeros();
         init.eta[5] = 0.5 * kPi;
         ekf.reset(init);
+        const auto initial_covariance = ekf.covariance();
+        fails += expect(
+            initial_covariance.allFinite() &&
+                approx(initial_covariance(0, 0), 1.0, 1e-12) &&
+                approx(initial_covariance(14, 14), 1.0, 1e-12) &&
+                approx(initial_covariance(15, 15), 4.0, 1e-12),
+            "water-track: default initial covariance is preserved");
 
         const Eigen::Vector3d ground_velocity_body(1.2, -0.4, 0.1);
         const Eigen::Vector3d current_ned(0.3, 0.5, -0.1);
@@ -262,7 +270,7 @@ int main()
         meas.gps_velocity_ned.covariance =
             1.0e-4 * Eigen::Matrix3d::Identity();
 
-        hydrox::AUVState s;
+        hydrox::NavigationState s;
         for (int i = 0; i < 80; ++i)
         {
             const double t = static_cast<double>(i + 1) * 0.1;
@@ -276,23 +284,83 @@ int main()
             s = ekf.update(meas, no_dvl, water_dvl, gps, 0.1);
         }
 
-        fails += expect((s.current_ned - current_ned).norm() < 0.08,
+        if ((s.medium_velocity_ned - current_ned).norm() >= 0.08 ||
+            (s.nu.segment<3>(0) - ground_velocity_body).norm() >= 0.08)
+        {
+            std::fprintf(
+                stderr,
+                "water-track diagnostic: medium=(%.6f, %.6f, %.6f) "
+                "velocity=(%.6f, %.6f, %.6f)\n",
+                s.medium_velocity_ned.x(),
+                s.medium_velocity_ned.y(),
+                s.medium_velocity_ned.z(),
+                s.nu[0],
+                s.nu[1],
+                s.nu[2]);
+        }
+        fails += expect((s.medium_velocity_ned - current_ned).norm() < 0.08,
                         "water-track: NED current converges with GPS velocity");
         fails += expect((s.nu.segment<3>(0) - ground_velocity_body).norm() < 0.08,
                         "water-track: state velocity remains body-frame ground velocity");
-        fails += expect(s.current_valid,
+        fails += expect(s.medium_velocity_valid,
                         "water-track: current validity follows covariance after observation");
+        fails += expect(
+            s.medium_velocity_kind == hydrox::MediumVelocityKind::WaterCurrent,
+            "water-track: generic medium state is labelled as water current");
 
         // Mutating a duplicate frame must not change the filter: both DVL and
         // GPS measurements are consumed by their HIL timestamp exactly once.
-        const Eigen::Vector3d current_before_duplicate = s.current_ned;
+        const Eigen::Vector3d current_before_duplicate = s.medium_velocity_ned;
         water_dvl.vel_x += 5.0;
         gps.vel_n += 5.0;
         s = ekf.update(meas, no_dvl, water_dvl, gps, 0.1);
-        fails += expect((s.current_ned - current_before_duplicate).norm() < 1.0e-9 &&
+        fails += expect((s.medium_velocity_ned - current_before_duplicate).norm() < 1.0e-9 &&
                             ekf.last_stats().water_dvl_accepted == 0 &&
                             ekf.last_stats().gps_velocity_accepted == 0,
                         "water-track: duplicate timestamps are never fused twice");
+    }
+
+    // 7. Platform estimation profiles configure the common EKF without
+    // branching the filter implementation.
+    {
+        const auto uuv =
+            hydrox::estimation_profile_for(hydrox::VehicleClass::UUV);
+        const auto usv =
+            hydrox::estimation_profile_for(hydrox::VehicleClass::USV);
+        const auto uav =
+            hydrox::estimation_profile_for(hydrox::VehicleClass::UAV_FIXED_WING);
+
+        fails += expect(
+            uuv.vertical_aid == hydrox::VerticalAidMode::PressureDepth &&
+                uuv.medium_velocity_kind ==
+                    hydrox::MediumVelocityKind::WaterCurrent &&
+                uuv.estimate_medium_velocity,
+            "profile: UUV uses pressure depth and estimates water current");
+        fails += expect(
+            usv.vertical_aid == hydrox::VerticalAidMode::SurfaceConstraint &&
+                usv.ekf.q_vel != uuv.ekf.q_vel,
+            "profile: USV uses a surface constraint and platform tuning");
+        fails += expect(
+            uav.vertical_aid == hydrox::VerticalAidMode::GpsAltitude &&
+                uav.medium_velocity_kind == hydrox::MediumVelocityKind::Wind &&
+                !uav.estimate_medium_velocity &&
+                !uav.fuse_bottom_track_dvl &&
+                !uav.fuse_relative_medium_velocity,
+            "profile: UAV uses GPS altitude and disables unobservable wind/DVL");
+
+        EKF usv_ekf(usv);
+        EKF uav_ekf(uav);
+        fails += expect(
+            approx(usv_ekf.covariance()(0, 0),
+                   usv.ekf.initial_position_variance, 1e-12) &&
+                approx(usv_ekf.covariance()(3, 3),
+                       usv.ekf.initial_attitude_variance, 1e-12),
+            "profile: EKF applies platform initial covariance");
+        fails += expect(
+            uav_ekf.medium_velocity_kind() ==
+                    hydrox::MediumVelocityKind::Wind &&
+                !uav_ekf.estimates_medium_velocity(),
+            "profile: UAV keeps wind semantics but never reports it observable");
     }
 
     if (fails == 0)

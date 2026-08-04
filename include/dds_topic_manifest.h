@@ -43,8 +43,8 @@ inline constexpr TopicSpec kVehicleLocalPosition{
     "oceanx_interfaces::msg::dds_::VehicleLocalPosition_",
     1,
     1,
-    0,
-    "GNC tick",
+    5,
+    "5 Hz diagnostics",
 };
 
 inline constexpr TopicSpec kSensorCombined{
@@ -56,8 +56,8 @@ inline constexpr TopicSpec kSensorCombined{
     "oceanx_interfaces::msg::dds_::SensorCombined_",
     2,
     2,
-    0,
-    "GNC tick",
+    5,
+    "5 Hz diagnostics",
 };
 
 inline constexpr TopicSpec kActuatorOutputs{
@@ -69,8 +69,8 @@ inline constexpr TopicSpec kActuatorOutputs{
     "oceanx_interfaces::msg::dds_::ActuatorOutputs_",
     3,
     3,
-    0,
-    "GNC tick",
+    5,
+    "5 Hz diagnostics",
 };
 
 inline constexpr TopicSpec kVehicleStatus{
@@ -86,17 +86,17 @@ inline constexpr TopicSpec kVehicleStatus{
     "1 Hz",
 };
 
-inline constexpr TopicSpec kAuvState{
-    "auv_state",
+inline constexpr TopicSpec kStateEstimate{
+    "state_estimate",
     TopicScope::HydroxVehicle,
     TopicFlow::Publish,
-    "/out/auv_state",
-    "/out/auv_state",
-    "oceanx_interfaces::msg::dds_::AUVState_",
+    "/out/state_estimate",
+    "/out/state_estimate",
+    "oceanx_interfaces::msg::dds_::VehicleState_",
     5,
     5,
-    0,
-    "GNC tick",
+    20,
+    "20 Hz control-state telemetry",
 };
 
 inline constexpr TopicSpec kTruthState{
@@ -105,11 +105,11 @@ inline constexpr TopicSpec kTruthState{
     TopicFlow::Publish,
     "/out/truth_state",
     "/out/truth_state",
-    "oceanx_interfaces::msg::dds_::AUVState_",
+    "oceanx_interfaces::msg::dds_::VehicleState_",
     9,
     9,
-    20,
-    "20 Hz debug when HIL truth is available",
+    5,
+    "5 Hz debug when HIL truth is available",
 };
 
 inline constexpr TopicSpec kOdometry{
@@ -121,8 +121,8 @@ inline constexpr TopicSpec kOdometry{
     "nav_msgs::msg::dds_::Odometry_",
     6,
     6,
-    20,
-    "20 Hz",
+    5,
+    "5 Hz",
 };
 
 inline constexpr TopicSpec kTf{
@@ -134,8 +134,8 @@ inline constexpr TopicSpec kTf{
     "tf2_msgs::msg::dds_::TFMessage_",
     7,
     7,
-    20,
-    "20 Hz",
+    5,
+    "5 Hz",
 };
 
 inline constexpr TopicSpec kSetpoint{
@@ -195,7 +195,7 @@ inline constexpr std::array<TopicSpec, 12> kManifest{
     kSensorCombined,
     kActuatorOutputs,
     kVehicleStatus,
-    kAuvState,
+    kStateEstimate,
     kTruthState,
     kOdometry,
     kTf,

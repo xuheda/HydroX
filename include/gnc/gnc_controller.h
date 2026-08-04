@@ -3,7 +3,7 @@
  * gnc_controller.h — SlenderBodyAUVController (cascade control, torpedo-type AUV configuration)
  *
  * Configuration: Underactuated slender body (EcaA9/LAUV). Depth is controlled via pitch, not directly via heave.
- * Input: AUVState + GNCSetpoint + GNCMode
+ * Input: NavigationState + GNCSetpoint + GNCMode
  * Output: Wrench (generalized force tau) — Allocation is handled by a separate IAllocator (see control_interfaces.h).
  *
  * Formerly GNCController; renamed after separating the allocator to distinguish it from other configurations (ROV/USV/Aero).
@@ -53,7 +53,7 @@ namespace hydrox
 
         explicit SlenderBodyAUVController(const Params &p = {});
 
-        void reset(const AUVState &state) override;
+        void reset(const NavigationState &state) override;
         void set_mode(GNCMode mode) override
         {
             _mode = mode;
@@ -67,7 +67,7 @@ namespace hydrox
         }
         void set_setpoint(const GNCSetpoint &sp) override { _sp = sp; }
 
-        Wrench update(const AUVState &state, double dt) override;
+        Wrench update(const NavigationState &state, double dt) override;
 
     private:
         GNCMode _mode = GNCMode::DISABLED;

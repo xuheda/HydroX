@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0",
+  "id": "generic-usv-twin-prop",
+  "control_contract": "hydrox.control/surface-vessel@1",
+  "archetype": "surface",
+  "vehicle_class": "usv",
+  "control_model": {
+    "mass_kg": 90.0,
+    "max_thrust_per_actuator_n": 150.0,
+    "channel_surge_limit_n": 150.0,
+    "channel_lever_arm_m": 0.55,
+    "controller": {
+      "surface": {
+        "surge_kp": 260.0,
+        "surge_kd": 95.0,
+        "yaw_kp": 140.0,
+        "yaw_kd": 65.0,
+        "max_force_n": 300.0,
+        "max_moment_nm": 165.0,
+        "waypoint_surge_mps": 2.0
+      }
+    }
+  }
+}

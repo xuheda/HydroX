@@ -2,7 +2,6 @@
 /**
  * ekf.h - Hybrid aided EKF with error states on a nominal navigation state.
  *
- * Ported/refactored from Python hydrox/estimator/ekf.py, rewritten in 2026-06
  * into an 18-dimensional aided navigation filter. It runs mechanized INS
  * propagation only when valid specific force is present; otherwise it falls
  * back to kinematic propagation aided by DVL/ZVU/depth/GPS.
@@ -13,7 +12,7 @@
  *         u, v, w,          // Body frame velocity (m/s)
  *         b_ax, b_ay, b_az, // Accelerometer bias (m/s^2, body frame)
  *         b_gx, b_gy, b_gz, // Gyroscope bias (rad/s, body frame)
- *         c_N, c_E, c_D]    // Water-current velocity (m/s, world NED)
+ *         m_N, m_E, m_D]    // Environmental-medium velocity (m/s, world NED)
  *
  * Mechanization (predict, requires specific force f_b):
  *   omega = omega_meas - b_g
@@ -30,7 +29,7 @@
  *
  * Measurement Updates:
  *   z_bottom_dvl = [u, v, w]                 Bottom-track body velocity
- *   z_water_dvl  = v_ground_body - R_nb^T c  Water-relative body velocity
+ *   z_medium_rel = v_ground_body - R_nb^T m  Medium-relative body velocity
  *   z_zvu   = [0, 0, 0]   Pseudo zero-velocity update (when DVL is invalid, weak constraint)
  *   z_depth = [D]         NED depth
  *   z_gps   = [N, E]      Surface/near-surface GPS position
@@ -40,6 +39,7 @@
  *                         GPS trajectory, magnetometers, USBL, or a simulated heading aid).
  *   z_heading = yaw       Optional heading/compass-like observation, used by SITL when the simulator supplies one.
  */
+#include "estimation_profile.h"
 #include "navigation_measurements.h"
 #include "types.h"
 #include <Eigen/Dense>
@@ -55,34 +55,7 @@ namespace hydrox
     class EKF
     {
     public:
-        struct Params
-        {
-            double q_pos = 0.01;
-            double q_att = 0.001;
-            double q_vel = 0.1;
-            double q_ba = 1e-6;  // Accelerometer bias random walk
-            double q_bg = 1e-7;  // Gyroscope bias random walk
-            double q_current = 0.01; // Water-current random walk (m/s)^2/s
-            double r_dvl = 0.01;
-            double r_water_dvl = 0.01;
-            double r_depth = 0.001;
-            double r_zvu = 0.5;   // Zero-velocity pseudo-measurement noise (effective when DVL is invalid)
-            double r_gps_xy = 0.02;
-            double r_gps_z = 4.0;
-            double r_gps_velocity = 0.04;
-            double r_level = 1.0; // Accelerometer leveling measurement noise (m/s²)^2
-            double r_heading = 0.0025; // Heading measurement noise (rad^2)
-            double level_gate = 0.5; // |norm(f_meas) - g| <= this value (m/s²) to perform leveling update
-            double gate_dvl_nis = 16.27;     // Chi-square 3D, ~99.9%
-            double gate_water_dvl_nis = 16.27; // Chi-square 3D, ~99.9%
-            double gate_gps_velocity_nis = 16.27; // Chi-square 3D, ~99.9%
-            double gate_level_nis = 16.27;   // Chi-square 3D, ~99.9%
-            double gate_gps_xy_nis = 13.82;  // Chi-square 2D, ~99.9%
-            double gate_scalar_nis = 10.83;  // Chi-square 1D, ~99.9%
-            double min_variance = 1.0e-9;
-            double initial_current_variance = 4.0;
-            double current_valid_std = 0.5;
-        };
+        using Params = EstimatorTuning;
 
         struct InnovationStats
         {
@@ -105,18 +78,21 @@ namespace hydrox
         };
 
         explicit EKF(const Params &p = {});
+        explicit EKF(const EstimationProfile &profile);
 
-        void reset(const AUVState &init);
+        void reset(const NavigationState &init);
 
-        AUVState update(const NavigationMeasurements &meas,
-                        const std::optional<DVLMeasurement> &bottom_dvl,
-                        const std::optional<DVLMeasurement> &water_dvl,
-                        const std::optional<GPSMeasurement> &gps,
-                        double dt);
+        NavigationState update(const NavigationMeasurements &meas,
+                               const std::optional<DVLMeasurement> &bottom_dvl,
+                               const std::optional<DVLMeasurement> &water_dvl,
+                               const std::optional<GPSMeasurement> &gps,
+                               double dt);
 
         const Eigen::Matrix<double, EKF_N, 1> &state() const { return _x; }
         const Eigen::Matrix<double, EKF_N, EKF_N> &covariance() const { return _P; }
         const InnovationStats &last_stats() const { return _last_stats; }
+        MediumVelocityKind medium_velocity_kind() const { return _medium_velocity_kind; }
+        bool estimates_medium_velocity() const { return _estimate_medium_velocity; }
 
     private:
         Eigen::Matrix<double, EKF_N, 1> _x;
@@ -139,8 +115,11 @@ namespace hydrox
         double _gate_gps_xy_nis = 13.82;
         double _gate_scalar_nis = 10.83;
         double _min_variance = 1.0e-9;
-        double _initial_current_variance = 4.0;
-        double _current_valid_std = 0.5;
+        Eigen::Matrix<double, EKF_N, 1> _initial_variance_diag =
+            Eigen::Matrix<double, EKF_N, 1>::Ones();
+        double _medium_velocity_valid_std = 0.5;
+        MediumVelocityKind _medium_velocity_kind = MediumVelocityKind::WaterCurrent;
+        bool _estimate_medium_velocity = true;
         double _last_bottom_dvl_timestamp_s = -std::numeric_limits<double>::infinity();
         double _last_water_dvl_timestamp_s = -std::numeric_limits<double>::infinity();
         double _last_gps_timestamp_s = -std::numeric_limits<double>::infinity();
@@ -150,11 +129,17 @@ namespace hydrox
         void _predict(const Eigen::Vector3d &accel, const Eigen::Vector3d &omega,
                       bool have_accel, double dt);
         bool _update_dvl(const Eigen::Vector3d &z_dvl, const Eigen::Matrix3d &R);
-        bool _update_water_dvl(const Eigen::Vector3d &z_water_dvl, const Eigen::Matrix3d &R);
+        bool _update_water_dvl(
+            const Eigen::Vector3d &z_water_dvl,
+            const Eigen::Matrix3d &R,
+            bool allow_attitude_correction);
         void _update_zvu(); // zero-velocity pseudo-update when DVL unavailable
         bool _update_depth(double depth_m, double variance);
         bool _update_gps_xy(const GPSMeasurement &gps, const Eigen::Matrix2d &R);
-        bool _update_gps_velocity(const GPSMeasurement &gps, const Eigen::Matrix3d &R);
+        bool _update_gps_velocity(
+            const GPSMeasurement &gps,
+            const Eigen::Matrix3d &R,
+            bool allow_attitude_correction);
         bool _update_gps_course_yaw(const GPSMeasurement &gps, double variance);
         bool _update_gps_altitude(double pos_d, double variance);
         std::optional<double> _heading_from_magnetometer(const Eigen::Vector3d &mag_body) const;
@@ -165,6 +150,7 @@ namespace hydrox
         double _valid_variance(double variance, double fallback) const;
         double _heading_variance_from_mag(const Vector3Measurement &mag) const;
         bool _consume_new_sample(double timestamp_s, double &last_timestamp_s);
+        void _reset_covariance();
 
         // Continuous-time dynamics x_dot = f(x, accel, omega), shared by predict integration and numerical Jacobian.
         static Eigen::Matrix<double, EKF_N, 1>

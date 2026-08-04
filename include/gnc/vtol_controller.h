@@ -28,14 +28,20 @@ namespace hydrox
         };
 
         explicit VtolController(const Params& p = {});
-        void reset(const AUVState&) override {}
+        void reset(const NavigationState& state) override
+        {
+            _heading_hold = state.eta[5];
+            _heading_hold_valid = true;
+        }
         void set_mode(GNCMode mode) override { _mode = mode; }
         void set_setpoint(const GNCSetpoint& sp) override { _sp = sp; }
-        Wrench update(const AUVState& state, double dt) override;
+        Wrench update(const NavigationState& state, double dt) override;
 
     private:
         Params _p;
         GNCMode _mode = GNCMode::DISABLED;
         GNCSetpoint _sp;
+        double _heading_hold = 0.0;
+        bool _heading_hold_valid = false;
     };
 }

@@ -5,6 +5,7 @@
 #include "fc_snapshot.h"
 #include "latest_value_mailbox.h"
 #include "mavlink_hil.h"
+#include "hydrox/platform/clock.h"
 
 #include <atomic>
 #include <chrono>
@@ -21,7 +22,7 @@ namespace hydrox::sitl
         std::string agent_ip = "127.0.0.1";
         uint16_t agent_port = 8888;
         uint16_t domain_id = 0;
-        std::string vehicle = "auv0";
+        std::string vehicle = "vehicle0";
         uint32_t client_key = 1;
         bool publish_truth_state = false;
     };
@@ -41,7 +42,7 @@ namespace hydrox::sitl
     {
         GNCSetpointDds setpoint{};
         uint64_t session_generation = 0;
-        std::chrono::steady_clock::time_point received_at{};
+        platform::MonotonicTimeUs received_at_us = 0;
     };
 
     // Owns all Micro XRCE-DDS operations on one background thread. The GNC
@@ -49,7 +50,7 @@ namespace hydrox::sitl
     class DdsWorker
     {
     public:
-        explicit DdsWorker(DdsWorkerConfig config);
+        DdsWorker(DdsWorkerConfig config, const platform::Clock &clock);
         ~DdsWorker();
 
         DdsWorker(const DdsWorker &) = delete;
@@ -68,6 +69,7 @@ namespace hydrox::sitl
                                        uint32_t connection_attempt);
 
         DdsWorkerConfig config_;
+        const platform::Clock &clock_;
         LatestValueMailbox<DdsTelemetrySample> telemetry_mailbox_;
         LatestValueMailbox<DdsSetpointSample> setpoint_mailbox_;
         LatestValueMailbox<DdsConnectionStatus> connection_status_mailbox_;

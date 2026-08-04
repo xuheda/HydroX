@@ -1,0 +1,34 @@
+{
+  "vehicle": "LegacyTestAUV",
+  "geometry": {
+    "length": 1.50,
+    "diameter": 0.20
+  },
+  "inertia": {
+    "rho": 1028.0,
+    "mass": 40.0
+  },
+  "actuators": {
+    "fins": {
+      "fin_area_m2": 0.020,
+      "allocator_CL_s": 3.5,
+      "allocator_CL_r": 3.2,
+      "fin_max_deflection_deg": 22.0,
+      "allocator_u_min": 1.2,
+      "fin_cop": [[-0.55, 0.0, 0.0]]
+    },
+    "propeller": {
+      "max_thrust_N": 180.0,
+      "D_prop": 0.15,
+      "KT_0": 0.42,
+      "KQ_0": 0.06,
+      "n_max_rpm": 3200.0,
+      "T_n": 0.15
+    }
+  },
+  "control": {
+    "depth": { "kp": 0.09 },
+    "pitch": { "kp": 40.0 },
+    "surge": { "kp": 180.0 }
+  }
+}

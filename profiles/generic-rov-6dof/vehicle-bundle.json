@@ -1,0 +1,34 @@
+{
+  "schema_version": "1.0",
+  "id": "generic-rov-6dof",
+  "control_contract": "hydrox.control/thruster-6dof@1",
+  "archetype": "thruster",
+  "vehicle_class": "uuv",
+  "control_model": {
+    "mass_kg": 45.0,
+    "max_thrust_per_actuator_n": 120.0,
+    "controller": {
+      "thruster": {
+        "surge": { "kp": 0.8, "kd": 1.1, "accel_max": 1.0 },
+        "sway":  { "kp": 0.8, "kd": 1.1, "accel_max": 1.0 },
+        "heave": { "kp": 0.8, "kd": 1.1, "accel_max": 0.8 },
+        "roll":  { "kp": 0.3, "kd": 0.6, "accel_max": 0.5 },
+        "pitch": { "kp": 0.3, "kd": 0.6, "accel_max": 0.5 },
+        "yaw":   { "kp": 0.5, "kd": 0.8, "accel_max": 0.6 }
+      }
+    }
+  },
+  "actuator_layout": {
+    "frame": "body_frd",
+    "thrusters": [
+      { "id": "vertical-front-port",  "position_m": [ 0.30,  0.22, 0.00 ], "direction_body": [ 0, 0, 1 ], "max_thrust_n": 120.0 },
+      { "id": "vertical-front-starboard", "position_m": [ 0.30, -0.22, 0.00 ], "direction_body": [ 0, 0, 1 ], "max_thrust_n": 120.0 },
+      { "id": "vertical-aft-port",    "position_m": [-0.30,  0.22, 0.00 ], "direction_body": [ 0, 0, 1 ], "max_thrust_n": 120.0 },
+      { "id": "vertical-aft-starboard", "position_m": [-0.30, -0.22, 0.00 ], "direction_body": [ 0, 0, 1 ], "max_thrust_n": 120.0 },
+      { "id": "horizontal-front-port", "position_m": [ 0.28,  0.20, 0.00 ], "direction_body": [ 0.70710678,  0.70710678, 0 ], "max_thrust_n": 120.0 },
+      { "id": "horizontal-front-starboard", "position_m": [ 0.28, -0.20, 0.00 ], "direction_body": [ 0.70710678, -0.70710678, 0 ], "max_thrust_n": 120.0 },
+      { "id": "horizontal-aft-port",   "position_m": [-0.28,  0.20, 0.00 ], "direction_body": [ 0.70710678, -0.70710678, 0 ], "max_thrust_n": 120.0 },
+      { "id": "horizontal-aft-starboard", "position_m": [-0.28, -0.20, 0.00 ], "direction_body": [ 0.70710678,  0.70710678, 0 ], "max_thrust_n": 120.0 }
+    ]
+  }
+}

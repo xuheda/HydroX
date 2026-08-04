@@ -1,0 +1,9 @@
+# Install into an isolated Python environment:
+#   python -m pip install -r learning/requirements.txt
+numpy>=1.26
+torch>=2.2
+matplotlib>=3.8
+onnx>=1.16
+onnxruntime>=1.17
+gymnasium>=0.29
+stable-baselines3>=2.3

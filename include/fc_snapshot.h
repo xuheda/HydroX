@@ -51,7 +51,7 @@ namespace hydrox
         float thrust = 0.0f;    // normalized thrust [-1, 1]
         float rpm = 0.0f;       // commanded/actual RPM used by actuator output topic
 
-        // Mission state exposed on the AUV state topic.
+        // Mission state exposed on the vehicle state-estimate topic.
         char mission_state[16] = "IDLE"; // IDLE / RUNNING / COMPLETE / FAILED
 
         // Motor model state.
@@ -71,6 +71,7 @@ namespace hydrox
         // nav_msgs/Odometry covariance, row-major [x,y,z,roll,pitch,yaw].
         double pose_cov[36] = {};
         double twist_cov[36] = {};
+        uint8_t odometry_covariance_valid = 0;
     };
 #pragma pack(pop)
 

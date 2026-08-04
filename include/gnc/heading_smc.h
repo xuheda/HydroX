@@ -1,5 +1,5 @@
 #pragma once
-/** heading_smc.h — Heading integral sliding mode controller (ported from Python heading_smc.py) */
+/** heading_smc.h — Heading integral sliding mode controller */
 #include "gnc/ref_model.h"
 
 namespace hydrox

@@ -12,6 +12,7 @@ namespace hydrox
         Dvl,
         Gps,
         Magnetometer,
+        SurfaceConstraint,
         TruthDebug,
     };
 

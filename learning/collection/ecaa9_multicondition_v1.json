@@ -1,0 +1,12 @@
+{
+  "format": "hydrox.learning-collection/v1",
+  "description": "Multi-condition Eca A9 baseline-GNC collection; learned residual authority is disabled.",
+  "scenario": "learning/scenarios/ecaa9_training.json",
+  "vehicle": "ecaa9_train",
+  "runs": [
+    {"id": "calm_s_bend", "showcase": "learning/showcases/ecaa9_s_bend_calm.json", "current_enabled": false, "hold_sec": 270, "ue_exit_sec": 330},
+    {"id": "cross_figure_eight", "showcase": "learning/showcases/ecaa9_figure_eight_cross.json", "current_enabled": true, "current_field": "learning/current_fields/cross_025.json", "hold_sec": 310, "ue_exit_sec": 370},
+    {"id": "adverse_depth_stairs", "showcase": "learning/showcases/ecaa9_depth_stairs_adverse.json", "current_enabled": true, "current_field": "learning/current_fields/adverse_030.json", "hold_sec": 270, "ue_exit_sec": 330},
+    {"id": "shear_vortex_loop", "showcase": "learning/showcases/ecaa9_shear_loop.json", "current_enabled": true, "current_field": "learning/current_fields/shear_vortex_020.json", "hold_sec": 300, "ue_exit_sec": 360}
+  ]
+}

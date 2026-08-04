@@ -2,7 +2,7 @@
 set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-build_dir="${script_dir}/build_sitl_linux"
+build_dir="${script_dir}/build/sitl"
 build_target="${1:-hydrox_sitl}"
 runtime_dir="${2:-}"
 

@@ -33,7 +33,7 @@ struct SerializedSetpoint
 };
 
 bool serialize_setpoint(SerializedSetpoint &sample,
-                        const std::string &frame_id = "world",
+                        const std::string &frame_id = "map_ned",
                         const std::string &mode = "WAYPOINT_3D",
                         double depth_ref = 4.5)
 {
@@ -124,10 +124,18 @@ int test_setpoint_decoder()
         return fail("oversized frame_id accepted");
     }
 
+    SerializedSetpoint wrong_frame;
+    if (!serialize_setpoint(wrong_frame, "world") ||
+        hydrox::dds_cdr::decode_gnc_setpoint(
+            wrong_frame.bytes.data(), wrong_frame.bytes.size(), decoded, nullptr))
+    {
+        return fail("non-map_ned setpoint frame accepted");
+    }
+
     SerializedSetpoint oversized_mode;
     if (!serialize_setpoint(
             oversized_mode,
-            "world",
+            "map_ned",
             std::string(hydrox::dds_cdr::MAX_SETPOINT_MODE_CHARS + 1, 'm')) ||
         hydrox::dds_cdr::decode_gnc_setpoint(
             oversized_mode.bytes.data(), oversized_mode.bytes.size(), decoded, nullptr))
@@ -154,7 +162,7 @@ int test_setpoint_decoder()
     SerializedSetpoint non_finite;
     if (!serialize_setpoint(
             non_finite,
-            "world",
+            "map_ned",
             "WAYPOINT_3D",
             std::numeric_limits<double>::quiet_NaN()) ||
         hydrox::dds_cdr::decode_gnc_setpoint(
@@ -164,7 +172,7 @@ int test_setpoint_decoder()
     }
 
     SerializedSetpoint unknown_mode;
-    if (!serialize_setpoint(unknown_mode, "world", "NOT_A_MODE") ||
+    if (!serialize_setpoint(unknown_mode, "map_ned", "NOT_A_MODE") ||
         hydrox::dds_cdr::decode_gnc_setpoint(
             unknown_mode.bytes.data(), unknown_mode.bytes.size(), decoded, nullptr))
     {
@@ -182,21 +190,66 @@ int test_setpoint_decoder()
     return 0;
 }
 
+int test_quaternion_contract()
+{
+    constexpr double roll = 0.4;
+    constexpr double pitch = -0.3;
+    constexpr double yaw = 0.7;
+    uint8_t bytes[64]{};
+    ucdrBuffer writer;
+    ucdr_init_buffer(&writer, bytes, sizeof(bytes));
+    if (!hydrox::dds_cdr::write_quaternion_rpy(
+            &writer, roll, pitch, yaw))
+    {
+        return fail("serialize combined RPY quaternion");
+    }
+
+    ucdrBuffer reader;
+    ucdr_init_buffer(&reader, bytes, ucdr_buffer_length(&writer));
+    double x = 0.0;
+    double y = 0.0;
+    double z = 0.0;
+    double w = 0.0;
+    if (!ucdr_deserialize_double(&reader, &x) ||
+        !ucdr_deserialize_double(&reader, &y) ||
+        !ucdr_deserialize_double(&reader, &z) ||
+        !ucdr_deserialize_double(&reader, &w))
+    {
+        return fail("deserialize combined RPY quaternion");
+    }
+
+    const double norm = x * x + y * y + z * z + w * w;
+    // Active Hamilton quaternion [x,y,z,w], with
+    // R_map_body = Rz(yaw) * Ry(pitch) * Rx(roll). Its first column is the
+    // BodyFRD forward axis expressed in map_ned.
+    const double forward_n = 1.0 - 2.0 * (y * y + z * z);
+    const double forward_e = 2.0 * (x * y + w * z);
+    const double forward_d = 2.0 * (x * z - w * y);
+    if (!close_to(norm, 1.0) ||
+        !close_to(forward_n, std::cos(yaw) * std::cos(pitch)) ||
+        !close_to(forward_e, std::sin(yaw) * std::cos(pitch)) ||
+        !close_to(forward_d, -std::sin(pitch)))
+    {
+        return fail("Hamilton/ZYX quaternion convention changed");
+    }
+    return 0;
+}
+
 } // namespace
 
 int main()
 {
     static_assert(hydrox::dds_topics::period_us(hydrox::dds_topics::kVehicleStatus) == 1'000'000ULL);
-    static_assert(hydrox::dds_topics::period_us(hydrox::dds_topics::kOdometry) == 50'000ULL);
+    static_assert(hydrox::dds_topics::period_us(hydrox::dds_topics::kOdometry) == 200'000ULL);
     static_assert(hydrox::dds_topics::kTf.topic_id != hydrox::dds_topics::kSetpoint.topic_id);
 
-    if (hydrox::dds_topics::dds_name(hydrox::dds_topics::kOdometry, "auv0") !=
-        std::string("rt/hydrox/auv0/out/odom"))
+    if (hydrox::dds_topics::dds_name(hydrox::dds_topics::kOdometry, "vehicle0") !=
+        std::string("rt/hydrox/vehicle0/out/odom"))
         return fail("odom dds name");
-    if (hydrox::dds_topics::ros_name(hydrox::dds_topics::kSetpoint, "auv0") !=
-        std::string("/hydrox/auv0/in/setpoint"))
+    if (hydrox::dds_topics::ros_name(hydrox::dds_topics::kSetpoint, "vehicle0") !=
+        std::string("/hydrox/vehicle0/in/setpoint"))
         return fail("setpoint ros name");
-    if (hydrox::dds_topics::dds_name(hydrox::dds_topics::kTf, "auv0") !=
+    if (hydrox::dds_topics::dds_name(hydrox::dds_topics::kTf, "vehicle0") !=
         std::string("rt/tf"))
         return fail("tf dds name");
 
@@ -261,6 +314,8 @@ int main()
         return fail("reader error");
 
     if (const int rc = test_setpoint_decoder(); rc != 0)
+        return rc;
+    if (const int rc = test_quaternion_contract(); rc != 0)
         return rc;
 
     return 0;

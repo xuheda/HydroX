@@ -46,10 +46,10 @@ namespace hydrox
 
         explicit ThrusterVehicleController(const Params &p = {});
 
-        void reset(const AUVState &) override {}
+        void reset(const NavigationState &) override {}
         void set_mode(GNCMode mode) override { _mode = mode; }
         void set_setpoint(const GNCSetpoint &sp) override { _sp = sp; }
-        Wrench update(const AUVState &state, double dt) override;
+        Wrench update(const NavigationState &state, double dt) override;
 
     private:
         Params _p;

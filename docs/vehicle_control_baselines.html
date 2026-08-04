@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vehicle Control Baselines · HydroX 文档</title>
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <header class="site-header"><div class="site-header__inner"><a class="site-title" href="index.html">HydroX 文档</a></div></header>
+  <main><article><h1 id="vehicle-control-baselines">Vehicle Control Baselines</h1>
+<p>更新日期：2026-07-28</p>
+<p><a href="index.html">返回 HydroX 文档首页</a> · <a href="../../doc/index.html">OceanX 集成文档</a></p>
+<h2 id="purpose">Purpose</h2>
+<p>The shipped vehicle parameters are conservative baseline values for repeatable waypoint following in the three-domain demonstration. They are intended for integration, mission, and UI validation rather than aggressive handling or system-identification work.</p>
+<h2 id="active-vehicle-profiles">Active Vehicle Profiles</h2>
+<table><thead><tr><th>Vehicle</th><th>Domain and controller</th><th>Baseline envelope</th></tr></thead><tbody><tr><td>X500</td><td>Multirotor</td><td>4 m/s routes, 0.32 rad maximum tilt</td></tr><tr><td>StandardVTOL</td><td>VTOL</td><td>6 m/s transition-safe routes, 0.28 rad maximum tilt</td></tr><tr><td>RCCessna</td><td>Fixed wing</td><td>14 m/s cruise routes, 0.40 rad maximum bank</td></tr><tr><td>WAM-V</td><td>Surface vessel</td><td>1.5 m/s surface routes, 200 N total commanded force</td></tr><tr><td>EcaA9</td><td>Slender-body AUV</td><td>2.4 m/s patrol at 100 m display depth</td></tr><tr><td>LAUV</td><td>Slender-body AUV</td><td>2.0 m/s patrol at 100 m display depth</td></tr><tr><td>Desistek Saga</td><td>ROV</td><td>0.8 m/s depth and yaw-controlled inspection routes</td></tr><tr><td>RexROV2</td><td>ROV</td><td>0.6 m/s depth and yaw-controlled inspection routes</td></tr></tbody></table>
+<h2 id="parameter-loading-contract">Parameter Loading Contract</h2>
+<p>HydroX loads each platform from one vehicle parameter file. Marine profiles live in <code>engine/Content/Fossen</code>; air profiles live in <code>engine/Content/Aero</code>. When a caller supplies <code>Content/Fossen</code> as the parameter directory, the loader also checks its sibling <code>Content/Aero</code> directory. This preserves the existing SITL invocation while making X500, RCCessna, and StandardVTOL profile-specific control tuning available at runtime.</p>
+<p>The root <code>control</code> object holds controller gains and limits. Its archetype groups are <code>thruster</code>, <code>surface</code>, <code>multirotor</code>, <code>fixedwing</code>, and <code>vtol</code>. The slender-body AUV profiles retain their existing <code>gnc</code> group. The controller factory takes its default values only when the matching control group is absent; a loaded group is the runtime source of truth.</p>
+<p>For ROVs, thruster caps remain separate from axis gains: the physical cap is <code>actuators.max_thrust_per_thruster_N</code>, while <code>control.thruster</code> defines the surge, sway, heave, roll, pitch, and yaw response. Unactuated axes are set to zero explicitly rather than relying on a misleading nonzero gain.</p>
+<h2 id="baseline-sweep">Baseline Sweep</h2>
+<p><code>demo/showcases/control_baseline.json</code> starts all eight per-vehicle planners, waits strictly for state/action readiness, and sends non-conflicting looping routes. Use it after bringing up the three-domain scenario:</p>
+<pre><code class="language-powershell">demo_showcase.bat demo\showcases\control_baseline.json 120 scenarios\default.json</code></pre>
+<p>The default fleet showcase keeps its EcaA9 patrol at 100 m display depth so the AUV remains observable and responds quickly without commanding the 199 m seabed region.</p>
+<h2 id="tuning-rules">Tuning Rules</h2>
+<p>Change one controller family at a time and keep waypoint speed below the documented baseline until the state topic shows stable tracking. Treat a new airframe or hull mass, inertia, actuator cap, or coordinate convention as a new baseline-validation event. Verify both the parser unit test and the eight-vehicle baseline sweep before promoting a change to a demonstration package.</p></article></main>
+</body>
+</html>

@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.0",
+  "id": "generic-auv-fin",
+  "control_contract": "hydrox.control/slender-body-fin@1",
+  "archetype": "slender_body_fin",
+  "vehicle_class": "uuv",
+  "control_model": {
+    "mass_kg": 70.0,
+    "pitch_inertia_kg_m2": 26.0,
+    "fins": {
+      "area_m2": 0.04,
+      "lift_slope_pitch_per_rad": 4.0,
+      "lift_slope_yaw_per_rad": 4.0,
+      "moment_arm_m": 0.70,
+      "max_deflection_deg": 25.0,
+      "minimum_effective_speed_mps": 1.5
+    },
+    "propeller": {
+      "diameter_m": 0.17,
+      "max_rpm": 3500.0,
+      "max_thrust_n": 250.0,
+      "thrust_coefficient": 0.4566,
+      "torque_coefficient": 0.07
+    },
+    "controller": {
+      "depth": { "kp": 0.08, "kd": 0.18, "theta_max": 0.12 },
+      "pitch": { "kp": 50.0, "kd": 45.0, "tau_max": 30.0 },
+      "surge": { "kp": 220.0, "ki": 10.0, "kd": 14.0 }
+    }
+  }
+}

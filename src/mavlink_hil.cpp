@@ -79,16 +79,43 @@ namespace hydrox
     // Receive: byte stream -> frame
     std::vector<MavFrame> MavlinkHIL::feed(const uint8_t *data, size_t len)
     {
-        _buf.insert(_buf.end(), data, data + len);
         std::vector<MavFrame> result;
-        while (true)
-        {
-            auto frame = _parse_one();
-            if (!frame)
-                break;
-            result.push_back(std::move(*frame));
-        }
+        feed_each(
+            data,
+            len,
+            &result,
+            [](void *context, const MavFrame &frame)
+            {
+                static_cast<std::vector<MavFrame> *>(context)->push_back(frame);
+            });
         return result;
+    }
+
+    void MavlinkHIL::feed_each(const uint8_t *data, size_t len,
+                               void *context, FrameVisitor visitor)
+    {
+        if (data == nullptr || visitor == nullptr)
+            return;
+
+        for (size_t i = 0; i < len; ++i)
+        {
+            if (!_buf.push_back(data[i]))
+            {
+                // A valid MAVLink 2 packet fits in the fixed buffer. Overflow
+                // therefore means corrupt input; resynchronise at this byte.
+                _buf.clear();
+                if (data[i] == 0xFD)
+                    (void)_buf.push_back(data[i]);
+            }
+
+            while (true)
+            {
+                auto frame = _parse_one();
+                if (!frame)
+                    break;
+                visitor(context, *frame);
+            }
+        }
     }
 
     std::optional<MavFrame> MavlinkHIL::_parse_one()
@@ -163,8 +190,8 @@ namespace hydrox
         frame.sysid = sysid;
         frame.compid = compid;
         frame.signed_frame = signed_frame;
-        frame.payload = std::vector<uint8_t>(_buf.begin() + 10,
-                                             _buf.begin() + 10 + payload_len);
+        (void)frame.payload.assign(_buf.begin() + 10,
+                                   _buf.begin() + 10 + payload_len);
         _buf.erase(_buf.begin(), _buf.begin() + static_cast<int>(frame_len));
         return frame;
     }
@@ -208,20 +235,33 @@ namespace hydrox
             (static_cast<uint32_t>(sysid) << 16) |
             (static_cast<uint32_t>(compid) << 8) |
             static_cast<uint32_t>(link_id);
-        const auto previous = _last_rx_timestamps.find(stream_id);
-        if (previous != _last_rx_timestamps.end() && timestamp <= previous->second)
+        ReplayStream *previous = nullptr;
+        ReplayStream *unused = nullptr;
+        for (ReplayStream &stream : _last_rx_timestamps)
+        {
+            if (stream.used && stream.id == stream_id)
+                previous = &stream;
+            else if (!stream.used && unused == nullptr)
+                unused = &stream;
+        }
+        if (previous != nullptr && timestamp <= previous->timestamp)
             return false;
 
         constexpr uint64_t kReplayStartupWindowTicks = 6000000ULL; // 60 seconds
         const uint64_t local_timestamp = std::max(
             mavlink_signing_timestamp_10us(), _tx_signing_timestamp);
-        if (previous == _last_rx_timestamps.end() &&
+        if (previous == nullptr &&
             timestamp + kReplayStartupWindowTicks < local_timestamp)
         {
             return false;
         }
 
-        _last_rx_timestamps[stream_id] = timestamp;
+        ReplayStream *target = previous != nullptr ? previous : unused;
+        if (target == nullptr)
+            return false;
+        target->id = stream_id;
+        target->timestamp = timestamp;
+        target->used = true;
         _tx_signing_timestamp = std::max(_tx_signing_timestamp, timestamp);
         return true;
     }
@@ -401,7 +441,8 @@ namespace hydrox
         le_read(ptr + 12, count);
         const size_t available =
             (p.size() - header_bytes) / contact_bytes;
-        const size_t n = std::min<size_t>(count, available);
+        const size_t n = std::min<size_t>(
+            std::min<size_t>(count, available), HIL_MAX_ACOUSTIC_CONTACTS);
         m.contacts.reserve(n);
         for (size_t i = 0; i < n; ++i)
         {
@@ -415,11 +456,11 @@ namespace hydrox
                 le_read(c + 16 + k * 4, contact.position_ned[k]);
             for (int k = 0; k < 3; ++k)
                 le_read(c + 28 + k * 4, contact.velocity_ned[k]);
-            le_read(c + 40, contact.attitude_rpy[2]);
+            le_read(c + 40, contact.yaw_ned_rad);
             for (int k = 0; k < 3; ++k)
                 le_read(c + 44 + k * 4, contact.payload[k]);
             contact.valid = true;
-            m.contacts.push_back(contact);
+            (void)m.contacts.push_back(contact);
         }
         return m;
     }
@@ -439,13 +480,15 @@ namespace hydrox
         le_read(ptr + 8, m.ray_count);
         le_read(ptr + 12, m.max_range_m);
         const size_t available = (p.size() - header_bytes) / sizeof(float);
-        const size_t n = std::min<size_t>(m.ray_count, available);
+        const size_t n = std::min<size_t>(
+            std::min<size_t>(m.ray_count, available),
+            HIL_MAX_RANGEFINDER_RAYS);
         m.ranges_m.reserve(n);
         for (size_t i = 0; i < n; ++i)
         {
             float range_m = 0.0f;
             le_read(p.data() + header_bytes + i * sizeof(float), range_m);
-            m.ranges_m.push_back(range_m);
+            (void)m.ranges_m.push_back(range_m);
         }
         m.ray_count = static_cast<uint32_t>(m.ranges_m.size());
         m.valid = m.time_usec > 0 && m.max_range_m > 0.0f && !m.ranges_m.empty();
@@ -457,30 +500,58 @@ namespace hydrox
                                                    const uint8_t *payload,
                                                    size_t payload_len) const
     {
-        // MAVLink2 header: STX(1) LEN(1) INC(1) CMP(1) SEQ(1) SYSID(1) COMPID(1) MSGID(3)
-        std::vector<uint8_t> frame;
-        const bool sign_outgoing = _signing.valid() && _signing.sign_outgoing;
-        frame.reserve(10 + payload_len + 2 +
-                      (sign_outgoing ? MAVLINK_SIGNATURE_BLOCK_LEN : 0));
+        MavlinkPacket packet;
+        if (!_encode_frame(packet, msg_id, payload, payload_len))
+            return {};
+        return std::vector<uint8_t>(
+            packet.bytes.begin(), packet.bytes.begin() + packet.length);
+    }
 
-        frame.push_back(0xFD);                              // STX
-        frame.push_back(static_cast<uint8_t>(payload_len)); // LEN
-        frame.push_back(sign_outgoing ? MAVLINK_IFLAG_SIGNED : 0); // incompat_flags
-        frame.push_back(0);                                 // compat_flags
-        frame.push_back(_seq++);                            // seq
-        frame.push_back(_sysid);
-        frame.push_back(_compid);
-        frame.push_back(static_cast<uint8_t>(msg_id & 0xFF));
-        frame.push_back(static_cast<uint8_t>((msg_id >> 8) & 0xFF));
-        frame.push_back(static_cast<uint8_t>((msg_id >> 16) & 0xFF));
-        frame.insert(frame.end(), payload, payload + payload_len);
+    bool MavlinkHIL::_encode_frame(MavlinkPacket &packet,
+                                   uint32_t msg_id,
+                                   const uint8_t *payload,
+                                   size_t payload_len) const
+    {
+        packet.length = 0;
+        if (payload_len > MAVLINK_MAX_PAYLOAD_LEN ||
+            (payload == nullptr && payload_len != 0))
+        {
+            return false;
+        }
+
+        const bool sign_outgoing = _signing.valid() && _signing.sign_outgoing;
+        const size_t expected_length = 10 + payload_len + 2 +
+            (sign_outgoing ? MAVLINK_SIGNATURE_BLOCK_LEN : 0);
+        if (expected_length > packet.bytes.size())
+            return false;
+
+        auto append = [&](uint8_t value)
+        {
+            packet.bytes[packet.length++] = value;
+        };
+        append(0xFD);
+        append(static_cast<uint8_t>(payload_len));
+        append(sign_outgoing ? MAVLINK_IFLAG_SIGNED : 0);
+        append(0);
+        append(_seq++);
+        append(_sysid);
+        append(_compid);
+        append(static_cast<uint8_t>(msg_id & 0xFF));
+        append(static_cast<uint8_t>((msg_id >> 8) & 0xFF));
+        append(static_cast<uint8_t>((msg_id >> 16) & 0xFF));
+        if (payload_len > 0)
+        {
+            std::memcpy(packet.bytes.data() + packet.length,
+                        payload, payload_len);
+            packet.length += payload_len;
+        }
 
         // CRC: From frame[1] (LEN) to the end of payload
-        uint16_t crc = _crc16(frame.data() + 1, 9 + payload_len);
+        uint16_t crc = _crc16(packet.data() + 1, 9 + payload_len);
         uint8_t ex = crc_extra_table(msg_id);
         crc = _crc16(&ex, 1, crc);
-        frame.push_back(static_cast<uint8_t>(crc & 0xFF));
-        frame.push_back(static_cast<uint8_t>(crc >> 8));
+        append(static_cast<uint8_t>(crc & 0xFF));
+        append(static_cast<uint8_t>(crc >> 8));
 
         if (sign_outgoing)
         {
@@ -495,20 +566,22 @@ namespace hydrox
             std::array<uint8_t, 32> digest{};
             if (!mavlink_signing_digest(
                     _signing.secret_key,
-                    frame.data() + 1,
-                    frame.size() - 1,
+                    packet.data() + 1,
+                    packet.size() - 1,
                     _signing.link_id,
                     timestamp,
                     digest))
             {
-                return {};
+                packet.length = 0;
+                return false;
             }
-            frame.push_back(_signing.link_id);
+            append(_signing.link_id);
             for (int i = 0; i < 6; ++i)
-                frame.push_back(static_cast<uint8_t>((timestamp >> (8 * i)) & 0xFFu));
-            frame.insert(frame.end(), digest.begin(), digest.begin() + 6);
+                append(static_cast<uint8_t>((timestamp >> (8 * i)) & 0xFFu));
+            for (int i = 0; i < 6; ++i)
+                append(digest[static_cast<size_t>(i)]);
         }
-        return frame;
+        return packet.length == expected_length;
     }
 
     std::vector<uint8_t> MavlinkHIL::encode_hil_actuator_controls(
@@ -531,6 +604,23 @@ namespace hydrox
         return _encode_frame(MSGID_HIL_ACTUATOR_CONTROLS, buf, 81);
     }
 
+    bool MavlinkHIL::encode_hil_actuator_controls(
+        MavlinkPacket &packet,
+        const std::array<float, 8> &controls,
+        uint64_t time_usec,
+        uint8_t mode,
+        uint64_t flags) const
+    {
+        uint8_t buf[81] = {};
+        std::memcpy(buf, &time_usec, 8);
+        for (int i = 0; i < 8; ++i)
+            std::memcpy(buf + 8 + i * 4, &controls[i], 4);
+        std::memcpy(buf + 72, &flags, 8);
+        buf[80] = mode;
+        return _encode_frame(
+            packet, MSGID_HIL_ACTUATOR_CONTROLS, buf, sizeof(buf));
+    }
+
     std::vector<uint8_t> MavlinkHIL::encode_heartbeat(uint8_t mav_type) const
     {
         // HEARTBEAT (0): custom_mode(4) type(1) autopilot(1) base_mode(1)
@@ -543,6 +633,18 @@ namespace hydrox
         buf[7] = 4;  // MAV_STATE_ACTIVE
         buf[8] = 3;  // mavlink_version
         return _encode_frame(MSGID_HEARTBEAT, buf, 9);
+    }
+
+    bool MavlinkHIL::encode_heartbeat(
+        MavlinkPacket &packet, uint8_t mav_type) const
+    {
+        uint8_t buf[9] = {};
+        buf[4] = mav_type;
+        buf[5] = 0;
+        buf[6] = 0;
+        buf[7] = 4;
+        buf[8] = 3;
+        return _encode_frame(packet, MSGID_HEARTBEAT, buf, sizeof(buf));
     }
 
     std::vector<uint8_t> MavlinkHIL::encode_attitude(

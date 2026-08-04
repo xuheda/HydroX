@@ -1,0 +1,55 @@
+{
+  "name": "EcaA9 PINN Baseline Collection",
+  "description": "Single-AUV waypoint excitation using the unmodified HydroX controller.",
+  "scenario": "learning/scenarios/ecaa9_training.json",
+  "vehicle_names": ["ecaa9_train"],
+  "bringup": {
+    "vehicle_names": ["ecaa9_train"],
+    "start_fleet_manager": false,
+    "start_formation": false,
+    "start_pursuit": false,
+    "start_visualization": false,
+    "default_source": "auto",
+    "state_timeout_sec": 6.0,
+    "source_timeout_sec": 4.0
+  },
+  "ready": {
+    "timeout_sec": 90,
+    "per_call_timeout_sec": 8,
+    "strict": true,
+    "require_topic_messages": true,
+    "topics": ["/hydrox/ecaa9_train/out/auv_state"],
+    "actions": ["/oceanx/ecaa9_train/mission/follow_waypoints"]
+  },
+  "acts": [
+    {
+      "at": 0,
+      "type": "wait_ready",
+      "name": "EcaA9 control stack ready"
+    },
+    {
+      "at": 5,
+      "type": "follow_waypoints",
+      "name": "EcaA9 rounded waypoint excitation",
+      "vehicle": "ecaa9_train",
+      "waypoints": [
+        {"x": 100.0, "y": 0.0, "z": 100.0},
+        {"x": 150.0, "y": 60.0, "z": 115.0},
+        {"x": 80.0, "y": 130.0, "z": 90.0},
+        {"x": -30.0, "y": 70.0, "z": 110.0},
+        {"x": 0.0, "y": 0.0, "z": 100.0}
+      ],
+      "speed": 2.0,
+      "radius": 6.0,
+      "loop": true,
+      "wait": false
+    },
+    {
+      "at": 170,
+      "type": "topic_snapshot",
+      "name": "EcaA9 final state snapshot",
+      "topics": ["/hydrox/ecaa9_train/out/auv_state"],
+      "timeout_sec": 6
+    }
+  ]
+}

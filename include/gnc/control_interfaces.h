@@ -12,7 +12,7 @@
  * vehicle profile. Same-archetype vehicles differ only by params; new layouts
  * are new IAllocator impls (matrix-driven), not per-vehicle code.
  */
-#include "types.h" // AUVState, GNCSetpoint, GNCMode, FinCmd
+#include "types.h" // NavigationState, GNCSetpoint, GNCMode, FinCmd
 #include <Eigen/Core>
 #include <array>
 
@@ -36,10 +36,10 @@ namespace hydrox
     struct IController
     {
         virtual ~IController() = default;
-        virtual void reset(const AUVState &state) = 0;
+        virtual void reset(const NavigationState &state) = 0;
         virtual void set_mode(GNCMode mode) = 0;
         virtual void set_setpoint(const GNCSetpoint &sp) = 0;
-        virtual Wrench update(const AUVState &state, double dt) = 0;
+        virtual Wrench update(const NavigationState &state, double dt) = 0;
     };
 
     /** Control allocation: desired wrench -> normalised actuator commands. */

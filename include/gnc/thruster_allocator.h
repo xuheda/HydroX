@@ -34,10 +34,20 @@ namespace hydrox
     class ThrusterMatrixAllocator : public IAllocator
     {
     public:
+        static constexpr int MaxThrusters = 8;
+
         struct Params
         {
             std::vector<Thruster> thrusters;
             double lambda = 1e-3; // Tikhonov damping (robustness near-singular B)
+
+            // OceanX's current bluff-body Fossen bridge consumes channels
+            // [Fx, Fy, Fz, Mx, My, Mz], rather than individual propeller
+            // commands.  Use this compatibility path until the bridge grows
+            // a physical-thruster interface.
+            bool direct_wrench_output = false;
+            double direct_force_limit_N = 1.0;
+            double direct_moment_limit_Nm = 1.0;
         };
 
         explicit ThrusterMatrixAllocator(const Params &p);
@@ -46,7 +56,9 @@ namespace hydrox
 
     private:
         Params _p;
-        Eigen::Matrix<double, Eigen::Dynamic, 6> _Bpinv; // N x 6 damped pseudo-inverse
+        Eigen::Matrix<double, MaxThrusters, 6> _Bpinv =
+            Eigen::Matrix<double, MaxThrusters, 6>::Zero();
+        int _thruster_count = 0;
     };
 
 } // namespace hydrox

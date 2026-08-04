@@ -1,4 +1,5 @@
 #include "gnc/multirotor_allocator.h"
+#include "gnc/vtol_controller.h"
 #include "gnc/vtol_allocator.h"
 
 #include <cmath>
@@ -71,6 +72,40 @@ int main()
                     "VTOL channels 4..6 map elevator, aileron, rudder");
     fails += expect(vtol_cmd.ch[7] > static_cast<float>(vtol_params.pusher_trim),
                     "VTOL channel 7 drives the forward pusher");
+
+    tau.setZero();
+    tau[2] = 5.0 * 9.80665;
+    const auto hover_cmd = vtol.allocate(tau, 0.0);
+    fails += expect(std::abs(hover_cmd.ch[7]) < 1.0e-6f,
+                    "VTOL hover leaves the pusher off without a speed error");
+
+    hydrox::VtolController::Params controller_params;
+    controller_params.xy_kp = 0.35;
+    controller_params.xy_kd = 1.0;
+    controller_params.max_tilt_rad = 0.28;
+    hydrox::VtolController controller(controller_params);
+    hydrox::GNCSetpoint waypoint;
+    waypoint.wp_n = 8.0;
+    waypoint.wp_d = -45.0;
+    waypoint.surge_ref = 1.0;
+    controller.set_mode(hydrox::GNCMode::WAYPOINT_3D);
+    controller.set_setpoint(waypoint);
+    auto overspeed_state = hydrox::NavigationState::zeros();
+    overspeed_state.eta[2] = -45.0;
+    overspeed_state.nu[0] = 4.0;
+    const auto braking_wrench = controller.update(overspeed_state, 0.01);
+    fails += expect(braking_wrench[4] > 0.0,
+                    "VTOL forward overspeed commands a nose-up braking pitch");
+    fails += expect(std::abs(braking_wrench[0]) < 1.0e-9,
+                    "VTOL waypoint tracking keeps the pusher disabled in lift flight");
+
+    auto yaw_hold_state = hydrox::NavigationState::zeros();
+    yaw_hold_state.eta[2] = -45.0;
+    yaw_hold_state.eta[5] = 0.7;
+    controller.reset(yaw_hold_state);
+    const auto yaw_hold_wrench = controller.update(yaw_hold_state, 0.01);
+    fails += expect(std::abs(yaw_hold_wrench[5]) < 1.0e-9,
+                    "VTOL waypoint entry holds its current yaw in lift-rotor flight");
 
     if (fails == 0)
         std::cout << "test_air_allocators: all checks passed\n";

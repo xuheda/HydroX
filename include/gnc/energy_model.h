@@ -18,7 +18,7 @@
  *   EnergyState es = energy.update(motor_state.power_W, dt);
  */
 #include <cmath>
-#include <deque>
+#include <array>
 
 namespace hydrox
 {
@@ -56,7 +56,10 @@ namespace hydrox
         void reset()
         {
             _energy_Wh = 0.0;
-            _power_history.clear();
+            _power_history.fill(0.0);
+            _power_history_count = 0;
+            _power_history_cursor = 0;
+            _power_history_sum = 0.0;
             _state = EnergyState{};
             _state.V_terminal = _p.V_nom;
             _state.power_hotel_W = _p.P_hotel;
@@ -81,14 +84,18 @@ namespace hydrox
             // SOC
             const double soc = 1.0 - _energy_Wh / _p.capacity_Wh;
 
-            // Moving window average power (recent 10s, @100Hz = 1000 samples)
-            _power_history.push_back(p_total);
-            if (_power_history.size() > 1000)
-                _power_history.pop_front();
-            double p_avg = 0.0;
-            for (double pw : _power_history)
-                p_avg += pw;
-            p_avg /= static_cast<double>(_power_history.size());
+            // Fixed-capacity moving window. This avoids heap allocation and an
+            // O(N) sum in the embedded control loop.
+            if (_power_history_count == _power_history.size())
+                _power_history_sum -= _power_history[_power_history_cursor];
+            else
+                ++_power_history_count;
+            _power_history[_power_history_cursor] = p_total;
+            _power_history_sum += p_total;
+            _power_history_cursor =
+                (_power_history_cursor + 1) % _power_history.size();
+            const double p_avg = _power_history_sum /
+                                 static_cast<double>(_power_history_count);
 
             // Remaining runtime (s)
             const double energy_rem_Wh = _p.capacity_Wh * soc;
@@ -114,7 +121,10 @@ namespace hydrox
         Params _p;
         double _energy_Wh = 0.0;
         EnergyState _state;
-        std::deque<double> _power_history; // Sliding window (recent 10s)
+        std::array<double, 1000> _power_history{};
+        std::size_t _power_history_count = 0;
+        std::size_t _power_history_cursor = 0;
+        double _power_history_sum = 0.0;
     };
 
 } // namespace hydrox

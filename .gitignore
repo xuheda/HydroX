@@ -1,12 +1,33 @@
 # Build outputs
-build_sitl/
+build_*/
+build/
 *.exe
 *.pdb
 *.ilk
 *.obj
 *.o
+*.elf
+*.bin
+*.map
+
+# Local secrets and certificates
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+credentials*
+secrets*
+
+# Runtime logs
+*.log
+*.xlog
 
 # Python
+__pycache__/
+*.py[cod]
 cmake_install.cmake
 CMakeCache.txt
 CMakeFiles/
@@ -22,6 +43,22 @@ Thumbs.db
 
 # third_party (must be cloned separately)
 third_party/eigen/
+third_party/nuttx/
+third_party/nuttx-apps/
 
 # Localized README (Chinese version is not uploaded)
 README_CN.md
+
+# Local paper sources and generated learning artifacts
+/ieeeconf/
+/learning/datasets/
+/learning/export/
+/learning/evaluation/ecaa9_control_shadow_v1/
+/learning/**/*.npz
+/learning/**/*.pkl
+/learning/**/*.pt
+/learning/**/*.zip
+/learning/**/*.csv
+/learning/**/*.jsonl
+/learning/**/*.png
+/learning/**/*_report.json

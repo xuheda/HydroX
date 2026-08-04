@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HydroX 文档 · HydroX 文档</title>
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <header class="site-header"><div class="site-header__inner"><a class="site-title" href="index.html">HydroX 文档</a></div></header>
+  <main><article><h1 id="hydrox-海洋与跨域自主系统自动驾驶仪">HydroX 海洋与跨域自主系统自动驾驶仪</h1>
+<p>更新日期：2026-07-31</p>
+<p class="product-positioning">HydroX 是面向海洋与跨域自主系统的独立自动驾驶仪，支持 PC 软件在环、Pixhawk 6C 硬件在环路线和后续实物部署。</p>
+<h2 id="阅读路径">阅读路径</h2>
+<ol><li><a href="development_structure.html">Stage 2 开发结构</a>：独立飞控边界、NuttX/Pixhawk 6C 路线以及 SITL/HITL 对齐规则。</li><li><a href="codebase_overview.html">HydroX 代码概览</a>：模块边界、构建目标、运行时与控制数据流。</li><li><a href="control_architecture.html">控制架构</a>：导航估计、GNC、MAVLink HIL、控制器与分配器边界。</li><li><a href="ros_interfaces.html">OceanX ROS 2 话题与接口契约</a>：Topic、Service、Action、QoS、频率、frame、超时和消息定义。</li><li><a href="control_methods.html">底层控制方法</a>：各载具原型的控制律、自由度耦合与分配器。</li><li><a href="vehicle_control_baselines.html">载具控制基线</a>：交付参数、调参与回归边界。</li><li><a href="vehicle_bundles.html">VehicleBundle 控制契约</a>：独立载具配置格式及验证规则。</li><li><a href="ros_topic_naming.html">ROS 2 命名兼容页</a>：指向独立接口文档的兼容入口。</li></ol>
+<h2 id="文档边界">文档边界</h2>
+<ul><li>HydroX 文档只维护自动驾驶仪运行时自身的实现、接口与控制契约。</li><li>OceanX ↔ HydroX 的进程边界、UE 传感器、固定步长、场景和打包运行方式，由 OceanX 文档维护。</li><li>两套文档均直接维护 HTML：<code>HydroX/docs/index.html</code> 是 HydroX 入口，<code>doc/index.html</code> 是 OceanX 入口。</li></ul></article></main>
+</body>
+</html>

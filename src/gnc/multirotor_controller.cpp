@@ -27,7 +27,7 @@ namespace hydrox
 
     MultirotorController::MultirotorController(const Params &p) : _p(p) {}
 
-    Wrench MultirotorController::update(const AUVState &state, double /*dt*/)
+    Wrench MultirotorController::update(const NavigationState &state, double /*dt*/)
     {
         Wrench tau;
         tau.setZero();

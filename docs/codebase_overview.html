@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HydroX 代码介绍文档 · HydroX 文档</title>
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <header class="site-header"><div class="site-header__inner"><a class="site-title" href="index.html">HydroX 文档</a></div></header>
+  <main><article><h1 id="hydrox-代码介绍文档">HydroX 代码介绍文档</h1>
+<p>更新日期：2026-07-29</p>
+<p><a href="index.html">返回 HydroX 文档首页</a> · <a href="development_structure.html">Stage 2 开发结构</a></p>
+<blockquote><p>本文档面向使用 HydroX 的开发者。HydroX 是一个用于海洋与跨域自主系统的自动驾驶仪，支持 SITL、HITL 和实物部署。</p></blockquote>
+<hr>
+<h2 id="目录">目录</h2>
+<ol><li><a href="#概述">概述</a></li><li><a href="#顶层目录与构建系统">顶层目录与构建系统</a></li><li><a href="#公共头文件">公共头文件</a></li><li><a href="#核心源文件">核心源文件</a></li><li><a href="#gnc-控制与分配">GNC 控制与分配</a></li><li><a href="#sitl-运行时">SITL 运行时</a></li><li><a href="#通信层">通信层</a></li><li><a href="#xlog-二进制日志">XLog 二进制日志</a></li><li><a href="#载具参数系统">载具参数系统</a></li><li><a href="#测试覆盖">测试覆盖</a></li><li><a href="#关键设计模式">关键设计模式</a></li><li><a href="#数据流总结">数据流总结</a></li><li><a href="#与-oceanx-的集成">与 OceanX 的集成</a></li></ol>
+<hr>
+<h2 id="概述">概述</h2>
+<p>HydroX 提供以下能力：</p>
+<ul><li>状态估计：统一 18 维混合辅助 EKF，由 UUV、USV、UAV Profile 选择性融合 IMU、DVL、GPS、深度/水面约束、磁罗盘等观测。</li><li>导航制导控制（GNC）：支持 slender-body AUV、ROV、USV、多旋翼、固定翼、VTOL 等多种载具。</li><li>控制分配：将期望的 6 自由度广义力映射到具体执行机构（舵、螺旋桨、推进器阵列、旋翼等）。</li><li>MAVLink HIL 通信：与仿真器（如 OceanX/Unreal Engine）通过 MAVLink HIL 协议交互。</li><li>DDS/XRCE 桥接：通过 Micro XRCE-DDS 与 ROS 2 生态交换遥测和设定点。</li><li>XLog 日志：自研二进制时序日志格式，用于回放与诊断。</li></ul>
+<p>HydroX 被设计为可独立运行的程序（<code>hydrox_sitl</code>），也可以作为库被其他项目链接。</p>
+<hr>
+<h2 id="顶层目录与构建系统">顶层目录与构建系统</h2>
+<h3 id="目录结构">目录结构</h3>
+<pre><code class="language-text">HydroX/
+├── CMakeLists.txt          # 主构建定义
+├── build_sitl.bat          # Windows 构建脚本
+├── build_sitl.sh           # Linux 构建脚本
+├── build_pixhawk6c_hitl.bat # Windows Pixhawk 6C HITL 构建入口
+├── build_pixhawk6c_hitl.sh  # Linux Pixhawk 6C HITL 构建入口
+├── LICENSE                 # Apache-2.0
+├── README.md
+├── THIRD_PARTY_NOTICES.md
+├── apps/
+│   ├── sitl/main.cpp       # SITL 可执行程序入口
+│   └── pixhawk6c_hitl/      # Pixhawk 6C NuttX HITL 应用入口与 Kconfig
+├── boards/
+│   └── pixhawk6c/          # Pixhawk 6C 启动、内存、总线和设备注册
+├── platform/
+│   ├── api/                # 无操作系统依赖的平台契约
+│   ├── host/               # Windows/Linux 平台适配
+│   └── nuttx/              # NuttX 平台适配
+├── cmake/
+│   ├── targets/
+│   │   └── pixhawk6c_hitl.cmake
+│   └── toolchains/
+│       └── arm_none_eabi_gcc.cmake
+├── include/                # 公共头文件
+│   ├── gnc/                # GNC 头文件
+│   ├── hydrox/runtime/     # 平台无关调度、安全和 HydroBus 接口
+│   └── ...
+├── src/                    # 核心库实现
+│   ├── gnc/                # GNC 实现
+│   ├── sitl/               # SITL 网络、DDS、日志等集成服务
+│   ├── runtime/           # HydroBus、调度、参数、日志、安全与 HIL 策略
+│   ├── transport/          # PC 传输层
+│   └── ...
+├── tests/                  # 单元测试
+└── third_party/            # 外部依赖说明</code></pre>
+<h3 id="cmake-构建目标">CMake 构建目标</h3>
+<table><thead><tr><th>目标</th><th>类型</th><th>说明</th></tr></thead><tbody><tr><td><code>hydrox</code></td><td>静态库</td><td>核心自动驾驶仪库</td></tr><tr><td><code>hydrox_sitl</code></td><td>可执行文件</td><td>PC 端 SITL，使用 Host 平台适配与 TCP HIL</td></tr><tr><td><code>hydrox_pixhawk6c_hitl</code></td><td>固件边界</td><td>Pixhawk 6C / STM32H743 的 HITL-only 目标；真实 NuttX BSP 缺失时明确失败，不生成占位固件</td></tr></tbody></table>
+<p><code>hydrox_pixhawk6c_hitl.bin</code> 是构建产物，不是仓库中的手写源码。Pixhawk 6C 专用代码统一放在 <code>boards/pixhawk6c/</code>；该目录仍需补齐固定版本的 NuttX 板级移植、兼容 bootloader 且经过实机验证的链接脚本、非阻塞 HIL/伴随计算机设备、定时器和 watchdog。条件未满足时配置会明确失败，不生成不可烧录的占位固件。</p>
+<p>SITL 与 HITL 共用 HydroX runtime 的周期调度器和命令权限门控。SITL 注入 <code>HostClock/HostSleeper</code>，Pixhawk 6C 注入 <code>NuttxClock/NuttxSleeper</code>；连接代次、有效传感器就绪、旧命令拒绝、超时撤权和错过周期处理不允许在两个入口中分别实现。TCP、DDS、QGC 和 PC XLog 仍属于 SITL 集成层。</p>
+<p>依赖：</p>
+<ul><li>Eigen 3.4+：线性代数，需手动克隆到 <code>third_party/eigen</code>。</li><li>Micro-CDR / Micro-XRCE-DDS-Client：CMake <code>FetchContent</code> 自动下载。</li><li>Apache NuttX 13.0.0：版本、下载地址和 SHA-512 固定在 <code>third_party/nuttx.lock.json</code>。</li><li>Threads / ws2_32 / bcrypt（Windows）或 OpenSSL（Linux）。</li></ul>
+<hr>
+<h2 id="公共头文件">公共头文件</h2>
+<h3 id="include-types-h"><code>include/types.h</code></h3>
+<p>核心数据结构：</p>
+<ul><li><code>NavigationState</code>：平台中性的 6 自由度位姿 <code>eta</code>、体坐标系速度 <code>nu</code> 和环境介质速度。</li><li><code>FinCmd</code>：4 个舵角、RPM、推力分数，提供 clamp 和 normalize 方法。</li><li><code>IMUMeasurement</code>、<code>DVLMeasurement</code>、<code>DepthMeasurement</code>、<code>GPSMeasurement</code>：传感器测量。</li><li><code>GNCMode</code>：控制模式（DISABLED、DEPTH_HOLD、WAYPOINT_3D、DP、SURFACE）。</li><li><code>GNCSetpoint</code>：深度、航向、前进速度、航点等设定值。</li><li><code>VehicleClass</code>：载具类别（UUV、USV、多旋翼、固定翼、VTOL）。</li></ul>
+<h3 id="include-estimation-profile-h"><code>include/estimation_profile.h</code></h3>
+<p><code>EstimationProfile</code> 集中定义平台垂向辅助、DVL/GPS/磁罗盘观测门控、环境速度语义和 <code>EstimatorTuning(Q/R/P0)</code>。SITL 为 EKF 与 SensorAdapter 注入同一 Profile，避免两侧类别判断漂移。</p>
+<h3 id="include-ekf-h"><code>include/ekf.h</code></h3>
+<p><code>class EKF</code>：18 维混合辅助扩展卡尔曼滤波器。</p>
+<p>状态向量：</p>
+<pre><code class="language-text">[N, E, D, roll, pitch, yaw, u, v, w, b_ax, b_ay, b_az, b_gx, b_gy, b_gz, m_N, m_E, m_D]</code></pre>
+<ul><li>位置 / 姿态 / 体坐标系速度</li><li>加速度计零偏、陀螺零偏</li><li>NED 坐标系下环境介质速度：水流或预留风速</li></ul>
+<p>测量更新包括：</p>
+<ul><li>底跟踪 DVL 速度</li><li>水跟踪 DVL 速度</li><li>零速度伪测量</li><li>深度</li><li>GPS 位置 / 速度</li><li>磁罗盘 / 真值航向</li><li>加速度计水平对准</li></ul>
+<h3 id="include-sensor_adapter-h"><code>include/sensor_adapter.h</code></h3>
+<p><code>class SensorAdapter</code>：将 MAVLink 帧解析为 <code>NavigationInput</code>。</p>
+<ul><li><code>ingest_frame()</code>：按 <code>msg_id</code> 分派。</li><li><code>build()</code>：计算时效性、协方差、GPS 地心地平坐标转 NED、判断加速度计是否可用。</li></ul>
+<h3 id="include-mavlink_hil-h"><code>include/mavlink_hil.h</code></h3>
+<p>手写 MAVLink 2 编解码器，不依赖 pymavlink/mavlink C 库。</p>
+<p>支持的消息：</p>
+<ul><li>输入：<code>HIL_SENSOR</code>、<code>HIL_GPS</code>、<code>HIL_DVL</code>、<code>HIL_TRUTH_STATE</code>、自定义 OceanX 传感器消息。</li><li>输出：<code>HIL_ACTUATOR_CONTROLS</code>、<code>HEARTBEAT</code>。</li><li>QGC 遥测：<code>ATTITUDE</code>、<code>LOCAL_POSITION_NED</code>、<code>VFR_HUD</code>、<code>GLOBAL_POSITION_INT</code>、<code>SYS_STATUS</code>、<code>STATUSTEXT</code>。</li></ul>
+<h3 id="include-transport-h-include-tcp_transport-h"><code>include/transport.h</code> / <code>include/tcp_transport.h</code></h3>
+<ul><li><code>Transport</code>：抽象接口。</li><li><code>TcpTransport</code>：跨平台 TCP socket，支持客户端/服务器模式、非阻塞 I/O。</li></ul>
+<h3 id="include-xlog_writer-h"><code>include/xlog_writer.h</code></h3>
+<p>XLog 1.0 二进制日志格式。</p>
+<ul><li>主题：<code>HydroxState</code>、<code>HydroxSetpoint</code>、<code>HydroxControlError</code>、<code>HydroxControllerOutput</code>、<code>HydroxActuator</code>、<code>HydroxEstimatorHealth</code>、<code>HydroxTiming</code>、<code>SimulatorTruth</code>、<code>DeploymentAlignment</code>。</li><li><code>Writer</code>：分块、CRC32 校验、分段文件写入。</li></ul>
+<h3 id="dds-相关头文件">DDS 相关头文件</h3>
+<table><thead><tr><th>头文件</th><th>作用</th></tr></thead><tbody><tr><td><code>dds_publisher.h</code></td><td>Micro XRCE-DDS 发布/订阅封装</td></tr><tr><td><code>dds_setpoint_codec.h</code></td><td>ROS 2 设定点 CDR 解码</td></tr><tr><td><code>dds_topic_manifest.h</code></td><td>话题清单与命名规则</td></tr><tr><td><code>dds_cdr_writer.h</code></td><td>手写 CDR 序列化</td></tr><tr><td><code>dds_connection_state.h</code></td><td>连接状态与会话代次管理</td></tr><tr><td><code>latest_value_mailbox.h</code></td><td>线程安全最新值邮箱</td></tr><tr><td><code>nonblocking_frame_sender.h</code></td><td>非阻塞帧原子发送</td></tr><tr><td><code>fc_snapshot.h</code></td><td>自动驾驶仪状态快照</td></tr></tbody></table>
+<h3 id="platform-api-与-hydrox-runtime"><code>platform/api</code> 与 <code>include/hydrox/runtime</code></h3>
+<table><thead><tr><th>接口</th><th>作用</th></tr></thead><tbody><tr><td><code>Clock</code> / <code>Sleeper</code></td><td>统一 Host 与 NuttX 的单调时间和等待契约</td></tr><tr><td><code>ByteStream</code></td><td>无阻塞、无动态分配的嵌入式字节流边界</td></tr><tr><td><code>PeriodicScheduler</code></td><td>固定 release time、迟到统计和错过周期跳过</td></tr><tr><td><code>ControlSessionGate</code></td><td>连接代次、传感器就绪、旧命令拒绝、超时和撤权</td></tr><tr><td><code>LatestValueTopic</code></td><td>固定内存的状态型 HydroBus topic</td></tr><tr><td><code>SpscQueue</code></td><td>固定容量的单生产者/单消费者事件队列</td></tr></tbody></table>
+<h3 id="include-fossen_vehicle_params-h"><code>include/fossen_vehicle_params.h</code></h3>
+<ul><li><code>VehicleArchetype</code>：载具控制构型。</li><li><code>FossenControlParams</code>：从 JSON 加载的载具参数。</li><li><code>load_fossen_control_params()</code>：加载参数。</li><li><code>apply_inertia_normalized_gains()</code>：按载具惯量归一化控制器增益。</li></ul>
+<hr>
+<h2 id="核心源文件">核心源文件</h2>
+<h3 id="src-ekf-cpp"><code>src/ekf.cpp</code></h3>
+<p>EKF 完整实现：</p>
+<ul><li><code>_predict()</code>：状态传播与协方差数值雅可比传播。</li><li><code>_update_*()</code>：各类传感器的测量更新。</li><li>创新卡方（NIS）门控，防止异常值污染。</li><li>水流状态通过水跟踪 DVL 与 GPS 地速联合估计。</li></ul>
+<h3 id="src-sensor_adapter-cpp"><code>src/sensor_adapter.cpp</code></h3>
+<ul><li>分派 MAVLink 帧。</li><li>GPS 地心地平转局部 NED。</li><li>区分底跟踪与水跟踪 DVL。</li><li>根据 <code>fields_updated</code> 判断加速度计、磁力计是否有效。</li><li>根据 <code>EstimationProfile</code> 选择压力深度、水面约束或 GPS 高度，并拒绝平台不适用的观测。</li></ul>
+<h3 id="src-mavlink_hil-cpp"><code>src/mavlink_hil.cpp</code></h3>
+<ul><li>CRC-16/MCRF4XX + CRC_EXTRA，与 PX4 兼容。</li><li>支持 MAVLink 2 签名验证与签名输出。</li><li>自定义 OceanX 传感器消息解析。</li></ul>
+<h3 id="src-mavlink_signing-cpp"><code>src/mavlink_signing.cpp</code></h3>
+<ul><li>从十六进制文件加载 32 字节密钥。</li><li>使用 Windows BCrypt 或 OpenSSL 计算 SHA-256 摘要。</li><li>常量时间签名比较。</li></ul>
+<h3 id="src-fossen_vehicle_params-cpp"><code>src/fossen_vehicle_params.cpp</code></h3>
+<ul><li>手写轻量 JSON 解析器（不依赖外部 JSON 库）。</li><li>兼容读取调用方显式传入的旧 JSON 文件或目录；新集成使用 <code>VehicleBundle</code>。</li><li>内置 EcaA9、LAUV、DesistekSaga、RexROV2、Otter、WAMV、X500、RCCessna、StandardVTOL 等回退参数。</li><li>用长球体 Lamb 因子计算附加质量惯量。</li></ul>
+<h3 id="src-xlog_writer-cpp"><code>src/xlog_writer.cpp</code></h3>
+<ul><li>CRC32、FNV-1a64 schema 哈希、JSON 转义。</li><li>文件头、元数据、schema、块、页脚的写入。</li><li>按目标块大小和最大段大小自动分段。</li></ul>
+<hr>
+<h2 id="gnc-控制与分配">GNC 控制与分配</h2>
+<h3 id="接口分离">接口分离</h3>
+<pre><code class="language-text">IController：状态 + 设定点 -&gt; Wrench（6 自由度广义力）
+IAllocator：Wrench -&gt; ActuatorCmd（归一化执行器通道）</code></pre>
+<p>一个载具 = 一个控制器 + 一个分配器，由 <code>build_control_stack()</code> 组装。</p>
+<h3 id="控制器">控制器</h3>
+<table><thead><tr><th>控制器</th><th>文件</th><th>用途</th></tr></thead><tbody><tr><td><code>SlenderBodyAUVController</code></td><td><code>gnc/gnc_controller.cpp</code></td><td>细长体鱼雷型 AUV，级联深度/俯仰/航向/前进控制</td></tr><tr><td><code>ThrusterVehicleController</code></td><td><code>gnc/thruster_controller.cpp</code></td><td>6 自由度推进器 ROV/AUV</td></tr><tr><td><code>SurfaceVesselController</code></td><td><code>gnc/surface_controller.cpp</code></td><td>双桨 USV</td></tr><tr><td><code>MultirotorController</code></td><td><code>gnc/multirotor_controller.cpp</code></td><td>四旋翼</td></tr><tr><td><code>FixedWingController</code></td><td><code>gnc/fixedwing_controller.cpp</code></td><td>固定翼</td></tr><tr><td><code>VtolController</code></td><td><code>gnc/vtol_controller.cpp</code></td><td>升力+巡航 VTOL</td></tr></tbody></table>
+<h3 id="分配器">分配器</h3>
+<table><thead><tr><th>分配器</th><th>文件</th><th>用途</th></tr></thead><tbody><tr><td><code>FinAllocator</code></td><td><code>gnc/control_allocator.cpp</code></td><td>十字尾舵 + 螺旋桨</td></tr><tr><td><code>ThrusterMatrixAllocator</code></td><td><code>gnc/thruster_allocator.cpp</code></td><td>推进器阵列，阻尼最小二乘伪逆</td></tr><tr><td><code>SurfaceAllocator</code></td><td><code>gnc/surface_allocator.cpp</code></td><td>左右双桨</td></tr><tr><td><code>MultirotorAllocator</code></td><td><code>gnc/multirotor_allocator.cpp</code></td><td>四旋翼推力混合</td></tr><tr><td><code>FixedWingAllocator</code></td><td><code>gnc/fixedwing_allocator.cpp</code></td><td>升降舵/副翼/方向舵/油门</td></tr><tr><td><code>VtolAllocator</code></td><td><code>gnc/vtol_allocator.cpp</code></td><td>升力旋翼 + 舵面 + 推进桨</td></tr></tbody></table>
+<h3 id="低层控制环">低层控制环</h3>
+<ul><li><code>DepthPID</code>：深度控制输出期望俯仰角。</li><li><code>PitchPID</code>：俯仰角跟踪。</li><li><code>HeadingSMC</code>：航向滑模控制。</li><li><code>SurgeP</code>：前进速度比例控制。</li><li><code>RefModel</code>：三阶 Fossen 参考模型。</li></ul>
+<h3 id="电机与能量模型">电机与能量模型</h3>
+<ul><li><code>MotorModel</code>：一阶螺旋桨/电机动态，输出推力、扭矩、功率、电流。</li><li><code>EnergyModel</code>：电池 SOC、端电压、剩余运行时间估计。</li></ul>
+<hr>
+<h2 id="sitl-运行时">SITL 运行时</h2>
+<h3 id="apps-sitl-main-cpp"><code>apps/sitl/main.cpp</code></h3>
+<p>SITL 主程序使用 <code>HostClock</code>、<code>HostSleeper</code>、共享 <code>PeriodicScheduler</code> 和 <code>ControlSessionGate</code> 运行默认 100 Hz 控制循环：</p>
+<ol><li>解析命令行配置。</li><li>初始化网络、父进程守护、MAVLink 签名、载具参数、控制栈。</li><li>外层循环：连接 UE5 TCP，建立新的控制会话代次，断线后撤权并重连。</li><li>内层循环（<code>rate_hz</code>）：<ul><li>读取 MAVLink 字节，送入 <code>SensorAdapter</code>。</li><li>只有收到本次连接代次的有效传感器后才允许接受新设定点。</li><li>处理仿真器暂停（<code>MAV_STATE_STANDBY</code>）并保持心跳。</li><li>消费 DDS 连接状态与设定点，按 DDS 和 HIL 会话代次过滤。</li><li>按平台单调时间检查设定点超时并进入安全 DISABLED 状态。</li><li>EKF 更新。</li><li>控制器更新 → 分配器 → 执行器命令。</li><li>电机模型、能量模型。</li><li>发送 <code>HIL_ACTUATOR_CONTROLS</code>。</li><li>发布 DDS 遥测。</li><li>发送 QGC 遥测（4 Hz）和 <code>SYS_STATUS</code>（1 Hz）。</li><li>写入 XLog。</li><li>由共享周期调度器等待下一 release time；迟到时跳过已错过周期，不忙等追赶。</li></ul></li></ol>
+<h3 id="src-sitl-sitl_config-cpp"><code>src/sitl/sitl_config.cpp</code></h3>
+<p>命令行配置解析，包括 UE5/QGC/DDS 地址、载具类型、EKF 模式、XLog 路径、初始状态、任务半径/超时等。</p>
+<h3 id="src-sitl-sitl_platform-cpp"><code>src/sitl/sitl_platform.cpp</code></h3>
+<ul><li><code>NetworkRuntime</code>：Windows 初始化 Winsock；Linux/POSIX 使用原生 socket，无需显式初始化。</li><li><code>ParentProcessGuard</code>：父进程退出时终止 SITL，Windows 使用进程句柄，Linux/POSIX 使用 PID 检查。</li><li><code>UdpSender</code>：QGC 广播 UDP。</li></ul>
+<h3 id="src-sitl-dds_worker-cpp"><code>src/sitl/dds_worker.cpp</code></h3>
+<p>后台线程拥有所有 XRCE-DDS 操作：</p>
+<ul><li>通过 <code>LatestValueMailbox</code> 与 GNC 线程交换遥测、设定点、连接状态。</li><li>断线重连，指数退避。</li><li>设定点加盖 XRCE 会话代次戳，并使用注入的 <code>platform::Clock</code> 记录本地接收时间。</li></ul>
+<h3 id="src-sitl-sitl_xlog-cpp"><code>src/sitl/sitl_xlog.cpp</code></h3>
+<p><code>XLogRecorder</code>：每控制周期组装一次记录，包括状态、设定点、力矩、执行器、导航、EKF，写入 XLog。</p>
+<hr>
+<h2 id="通信层">通信层</h2>
+<h3 id="mavlink-hil">MAVLink HIL</h3>
+<p>SITL 通过 MAVLink HIL over TCP 与仿真器通信；Pixhawk 6C HITL 将通过 UART/USB 字节流承载同一消息契约。协议解析和控制逻辑不应依赖具体传输。</p>
+<p>输入：</p>
+<ul><li><code>HIL_SENSOR</code>：IMU、深度。</li><li><code>HIL_GPS</code>：GPS。</li><li><code>HIL_DVL</code>：DVL 体坐标系速度。</li><li><code>HIL_TRUTH_STATE</code>：仿真器真值。</li><li>自定义 OceanX 传感器消息。</li></ul>
+<p>输出：</p>
+<ul><li><code>HIL_ACTUATOR_CONTROLS</code>：归一化执行器输出。</li><li><code>HEARTBEAT</code>：1 Hz。</li></ul>
+<p>QGC 遥测：</p>
+<ul><li><code>ATTITUDE</code>、<code>LOCAL_POSITION_NED</code>、<code>VFR_HUD</code>、<code>GLOBAL_POSITION_INT</code> @ 4 Hz。</li><li><code>SYS_STATUS</code> @ 1 Hz。</li></ul>
+<h3 id="micro-xrce-dds">Micro XRCE-DDS</h3>
+<pre><code class="language-text">GNC 线程 -&gt; LatestValueMailbox -&gt; DDS worker 线程 -&gt; DdsPublisher -&gt; UDP -&gt; MicroXRCEAgent -&gt; ROS 2
+ROS 2 设定点 -&gt; MicroXRCEAgent -&gt; UDP -&gt; DdsPublisher -&gt; callback -&gt; LatestValueMailbox -&gt; GNC 线程</code></pre>
+<p>话题清单见 <code>include/dds_topic_manifest.h</code>，包括：</p>
+<ul><li><code>vehicle_local_position</code>、<code>sensor_combined</code>、<code>actuator_outputs</code></li><li><code>vehicle_status</code>、<code>state_estimate</code>、<code>truth_state</code>、<code>odom</code>、<code>tf</code></li><li><code>setpoint</code>、<code>passive_sonar_bearing</code>、<code>acoustic_neighbors</code>、<code>rangefinder_scan</code></li></ul>
+<hr>
+<h2 id="xlog-二进制日志">XLog 二进制日志</h2>
+<h3 id="文件布局">文件布局</h3>
+<pre><code class="language-text">FileHeader (XLOG)
+metadata JSON
+schema JSON
+{ BlockHeader (XBLK) + payload records }
+...
+FileFooter (XEND)</code></pre>
+<h3 id="记录格式">记录格式</h3>
+<p>每条记录：</p>
+<pre><code class="language-text">RecordHeader (topic_id, timestamp_ns, sequence, payload_size) + payload</code></pre>
+<h3 id="可靠性">可靠性</h3>
+<ul><li>CRC32 校验文件头、块头、块载荷。</li><li>默认 512 MB 分段。</li><li>所有记录结构体有 <code>static_assert</code> 大小校验。</li><li>不完整尾部块自动忽略。</li></ul>
+<hr>
+<h2 id="载具参数系统">载具参数系统</h2>
+<h3 id="控制构型">控制构型</h3>
+<pre><code class="language-cpp">enum class VehicleArchetype {
+    SlenderBodyFin,   // 鱼雷型 AUV（舵+桨）
+    Thruster,         // 推进器 ROV/AUV
+    Surface,          // USV
+    Multirotor,       // 多旋翼
+    FixedWing,        // 固定翼
+    VTOL              // 垂直起降
+};</code></pre>
+<h3 id="vehiclebundle-控制契约">VehicleBundle 控制契约</h3>
+<p>新集成使用显式的、版本化 <code>VehicleBundle</code>：</p>
+<ul><li><code>profiles/&lt;bundle&gt;/vehicle-bundle.json</code>：控制构型、控制导向模型和逻辑执行器布局。</li><li>Bundle 不包含仿真器工程路径、SDF/URDF 资产或板级 PWM/CAN 映射。</li><li>多推进器布局直接传入 <code>ThrusterMatrixAllocator</code>，不再依赖命名车型的硬编码布局；加载时报告有效性矩阵秩和逻辑通道数。</li><li><code>fossen_vehicle_params</code> 仍保留为旧 JSON 的兼容加载器，但必须由调用者显式提供文件或目录。</li></ul>
+<p>详见 <a href="vehicle_bundles.html">VehicleBundle 控制契约</a>。</p>
+<h3 id="惯量归一化增益">惯量归一化增益</h3>
+<p>控制器增益按载具惯量缩放：</p>
+<ul><li>俯仰/偏航力矩环按 <code>M44_pitch</code> 缩放。</li><li>前进力环按 <code>mass_total</code> 缩放。</li></ul>
+<p>这样不同载具可获得相似的闭环动态响应。</p>
+<hr>
+<h2 id="测试覆盖">测试覆盖</h2>
+<p>PC 构建当前注册 23 项 CTest：</p>
+<table><thead><tr><th>测试</th><th>验证内容</th></tr></thead><tbody><tr><td><code>test_dds_cdr</code></td><td>CDR 序列化、GNCSetpoint 解码、异常输入处理</td></tr><tr><td><code>test_dds_cdr_writer</code></td><td><code>dds_cdr::Writer</code> 往返与溢出检测</td></tr><tr><td><code>test_latest_value_mailbox</code></td><td>Host 线程单槽覆盖与序列号跟踪</td></tr><tr><td><code>test_nonblocking_frame_sender</code></td><td>非阻塞帧发送与背压处理</td></tr><tr><td><code>test_dds_connection_state</code></td><td>DDS 连接代次和过期设定点拒绝</td></tr><tr><td><code>test_ue_control_session</code></td><td>共享 ControlSessionGate、传感器就绪、超时与重连撤权</td></tr><tr><td><code>test_fossen_vehicle_params</code></td><td>载具参数加载、构型选择、惯量归一化</td></tr><tr><td><code>test_vehicle_bundle</code></td><td>Bundle schema、显式加载、逻辑推进器布局</td></tr><tr><td><code>test_air_allocators</code></td><td>多旋翼与 VTOL 分配器</td></tr><tr><td><code>test_surface_controller</code></td><td>USV 控制器</td></tr><tr><td><code>test_thruster_allocator</code></td><td>推进器矩阵分配器</td></tr><tr><td><code>test_fixedwing_controller</code></td><td>固定翼控制器</td></tr><tr><td><code>test_ekf</code></td><td>静态零漂、回退、bias、姿态、航向和水流估计</td></tr><tr><td><code>test_sitl_config</code></td><td>SITL 命令行解析与验证</td></tr><tr><td><code>test_sitl_xlog</code></td><td>SITL XLog 组装与写入</td></tr><tr><td><code>test_sensor_adapter</code></td><td>传感器适配、DVL/GPS/真值时效</td></tr><tr><td><code>test_mavlink_signing</code></td><td>MAVLink 签名、重放和篡改检测</td></tr><tr><td><code>test_xlog_writer</code></td><td>CRC、分段、序列单调性和损坏检测</td></tr><tr><td><code>test_residual_rl</code></td><td>学习残差安全限幅</td></tr><tr><td><code>test_control_shadow</code></td><td>控制器影子验证链</td></tr><tr><td><code>test_platform_host</code></td><td>Host 单调时钟和临界区适配</td></tr><tr><td><code>test_runtime_bus</code></td><td>固定内存 latest-value topic 与 SPSC 队列</td></tr><tr><td><code>test_periodic_scheduler</code></td><td>固定周期、迟到统计、错过周期跳过与恢复</td></tr></tbody></table>
+<hr>
+<h2 id="关键设计模式">关键设计模式</h2>
+<h3 id="策略模式">策略模式</h3>
+<p><code>IController</code> 和 <code>IAllocator</code> 把控制律与执行器布局解耦。</p>
+<h3 id="工厂模式">工厂模式</h3>
+<p><code>build_control_stack()</code> 根据载具构型组装控制器和分配器。</p>
+<h3 id="适配器模式">适配器模式</h3>
+<p><code>SensorAdapter</code> 把原始 MAVLink 帧转换为类型化的 <code>NavigationInput</code>。</p>
+<h3 id="非阻塞线程边界">非阻塞线程边界</h3>
+<ul><li>没有新传感器输入时，SITL transport boundary 可以等待 socket 可读；该等待不推进控制状态。</li><li>收到输入后，单次 GNC 更新不等待 DDS，执行完成后立即返回执行器输出。</li><li><code>LatestValueMailbox</code> 在线程间传递最新值。</li><li>DDS worker 在后台线程执行所有 XRCE-DDS I/O。</li></ul>
+<h3 id="帧原子传输">帧原子传输</h3>
+<p><code>NonblockingFrameSender</code> 保证部分发送的帧尾在新帧之前完成，背压下仅丢弃完整未发送的帧。</p>
+<h3 id="会话门控">会话门控</h3>
+<p>DDS 与 HIL 链路均使用会话代次。共享 <code>ControlSessionGate</code> 要求每次连接先收到有效传感器，再接受该代次的新命令；断线、DDS 会话变化或平台单调时间超时都会撤销控制权限，旧命令不能跨重连恢复控制。</p>
+<h3 id="输入时间戳调度">输入时间戳调度</h3>
+<p>HydroX 控制核心不按部署环境选择调度模式。每个严格递增的输入 timestamp 恰好推进一次估计、制导、控制和分配，相邻 timestamp 之差构成算法 <code>dt</code>；没有新 timestamp 时不推进控制状态。平台单调时钟统一用于连接、通信权限、heartbeat 和 watchdog，不替代输入时间戳。</p>
+<hr>
+<h2 id="数据流总结">数据流总结</h2>
+<pre><code class="language-text">UE5/OceanX
+   │ HIL_SENSOR/HIL_GPS/HIL_DVL (TCP)
+   ▼
+TcpTransport ──► MavlinkHIL ──► SensorAdapter ──► NavigationInput
+                                                    │
+                                                    ▼
+                                                  EKF.update()
+                                                    │
+                                                    ▼
+                                               NavigationState
+                                                    │
+                              ┌─────────────────────┼─────────────────────┐
+                              ▼                     ▼                     ▼
+                        IController           IAllocator            DDS publisher
+                              │                     │                     │
+                              ▼                     ▼                     ▼
+                           Wrench              ActuatorCmd        FcSnapshot -&gt; ROS 2
+                              │                     │
+                              └──────────┬──────────┘
+                                         ▼
+                              HIL_ACTUATOR_CONTROLS (TCP)
+                                         │
+                                         ▼
+                                      UE5/OceanX</code></pre>
+<hr>
+<h2 id="与-oceanx-的集成">与 OceanX 的集成</h2>
+<p>OceanX 通过 Git Submodule 引用 HydroX：</p>
+<pre><code class="language-text">OceanX/
+├── HydroX/          # submodule -&gt; https://github.com/xuheda/HydroX
+├── engine/          # Unreal Engine 项目
+├── ros/             # ROS 2 包
+└── ...</code></pre>
+<p>构建 OceanX 前：</p>
+<pre><code class="language-bash">git submodule update --init --recursive
+cd HydroX
+git clone --depth 1 --branch 3.4.0 https://gitee.com/mirrors/eigen.git third_party/eigen</code></pre>
+<p>然后运行 OceanX 的构建脚本，会调用 <code>HydroX/build_sitl.bat</code> 编译 <code>hydrox_sitl.exe</code> 并部署到 <code>engine/Binaries/ThirdParty/HydroX/</code>。</p>
+<p>HydroX 与 OceanX 之间仅通过 MAVLink HIL 协议 通信，因此两者可以独立开发、独立版本发布。</p>
+<hr>
+<blockquote><p>最后更新：2026-07-24</p></blockquote></article></main>
+</body>
+</html>

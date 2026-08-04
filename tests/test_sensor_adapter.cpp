@@ -13,9 +13,10 @@ namespace
     constexpr uint32_t kHilFieldsAccel = (1u << 0) | (1u << 1) | (1u << 2);
     constexpr uint32_t kHilFieldsGyro = (1u << 3) | (1u << 4) | (1u << 5);
     constexpr uint32_t kHilFieldsMag = (1u << 6) | (1u << 7) | (1u << 8);
+    constexpr uint32_t kHilFieldAbsPressure = 1u << 9;
 
-    template <typename T>
-    void write_le(std::vector<uint8_t> &buf, size_t offset, const T &value)
+    template <typename Buffer, typename T>
+    void write_le(Buffer &buf, size_t offset, const T &value)
     {
         std::memcpy(buf.data() + offset, &value, sizeof(T));
     }
@@ -327,6 +328,75 @@ int main()
                         "Unknown GPS accuracy falls back to configured position variance") ? 0 : 1;
     fails += expect(fallback_nav.gps.has_value() && !fallback_nav.gps->has_velocity,
                     "UINT16_MAX marks GPS speed unavailable") ? 0 : 1;
+
+    // Platform policy is a semantic gate in addition to raw sensor validity.
+    hydrox::SensorAdapter uuv_adapter{
+        hydrox::SensorAdapter::Params{hydrox::VehicleClass::UUV}};
+    uuv_adapter.begin_cycle();
+    uuv_adapter.ingest_frame(hil_dvl(100000), codec);
+    uuv_adapter.ingest_frame(hil_gps(100000), codec);
+    uuv_adapter.ingest_frame(
+        hil_sensor(0.0f, 0.0f, -9.80665f,
+                   kHilFieldsAccel | kHilFieldsGyro |
+                       kHilFieldsMag | kHilFieldAbsPressure,
+                   25.0f, 0.0f, 43.30127f, 100000),
+        codec);
+    const auto uuv_nav = uuv_adapter.build();
+    fails += expect(
+        uuv_nav.measurements.depth.meta.valid &&
+            uuv_nav.measurements.depth.meta.source ==
+                hydrox::NavMeasurementSource::Depth &&
+            uuv_nav.dvl.has_value() &&
+            uuv_nav.gps.has_value() &&
+            !uuv_nav.gps->has_altitude,
+        "UUV profile fuses pressure depth and DVL but not GPS altitude") ? 0 : 1;
+
+    hydrox::SensorAdapter usv_adapter{
+        hydrox::SensorAdapter::Params{hydrox::VehicleClass::USV}};
+    usv_adapter.begin_cycle();
+    usv_adapter.ingest_frame(hil_gps(100000), codec);
+    usv_adapter.ingest_frame(
+        hil_sensor(0.0f, 0.0f, -9.80665f,
+                   kHilFieldsAccel | kHilFieldsGyro | kHilFieldsMag,
+                   25.0f, 0.0f, 43.30127f, 100000),
+        codec);
+    const auto usv_nav = usv_adapter.build();
+    fails += expect(
+        usv_nav.measurements.depth.meta.valid &&
+            usv_nav.measurements.depth.meta.source ==
+                hydrox::NavMeasurementSource::SurfaceConstraint &&
+            std::abs(usv_nav.measurements.depth.value) < 1e-12 &&
+            usv_nav.gps.has_value() &&
+            !usv_nav.gps->has_altitude,
+        "USV profile applies a surface constraint without pressure data") ? 0 : 1;
+
+    hydrox::SensorAdapter uav_adapter{
+        hydrox::SensorAdapter::Params{hydrox::VehicleClass::UAV_MULTIROTOR}};
+    uav_adapter.begin_cycle();
+    uav_adapter.ingest_frame(hil_dvl(100000), codec);
+    uav_adapter.ingest_frame(
+        hil_gps(100000, 3, UINT16_MAX, UINT16_MAX, 345), codec);
+    uav_adapter.ingest_frame(
+        hil_sensor(0.0f, 0.0f, -9.80665f,
+                   kHilFieldsAccel | kHilFieldsGyro |
+                       kHilFieldsMag | kHilFieldAbsPressure,
+                   25.0f, 0.0f, 43.30127f, 100000),
+        codec);
+    const auto uav_nav = uav_adapter.build();
+    fails += expect(
+        !uav_nav.depth_m.has_value() &&
+            !uav_nav.measurements.depth.meta.valid &&
+            uav_nav.gps.has_value() &&
+            uav_nav.gps->has_altitude &&
+            !uav_nav.dvl.has_value() &&
+            !uav_nav.water_dvl.has_value(),
+        "UAV profile fuses GPS altitude and rejects depth/DVL observations") ? 0 : 1;
+    fails += expect(
+        std::abs(
+            uav_nav.measurements.gps_position_ned.covariance(0, 0) -
+            hydrox::estimation_profile_for(
+                hydrox::VehicleClass::UAV_MULTIROTOR).ekf.r_gps_xy) < 1e-12,
+        "UAV profile tuning supplies GPS fallback covariance") ? 0 : 1;
 
     if (fails == 0)
         std::printf("test_sensor_adapter: all checks passed\n");

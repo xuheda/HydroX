@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.0",
+  "id": "generic-vtol-lift-cruise",
+  "control_contract": "hydrox.control/lift-cruise-vtol@1",
+  "archetype": "vtol",
+  "vehicle_class": "uav_vtol",
+  "control_model": {
+    "mass_kg": 6.0,
+    "max_total_lift_n": 220.0,
+    "controller": {
+      "vtol": {
+        "z_kp": 1.4,
+        "z_kd": 1.7,
+        "roll_kp": 2.8,
+        "roll_kd": 1.2,
+        "pitch_kp": 2.8,
+        "pitch_kd": 1.2,
+        "yaw_kp": 1.2,
+        "yaw_kd": 0.65,
+        "xy_kp": 0.4,
+        "xy_kd": 1.0,
+        "max_tilt_rad": 0.30,
+        "cruise_speed_mps": 15.0
+      }
+    }
+  }
+}

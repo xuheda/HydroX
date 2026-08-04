@@ -1,0 +1,11 @@
+{
+  "schema_version": "1.0",
+  "id": "generic-quad-x",
+  "control_contract": "hydrox.control/multirotor@1",
+  "archetype": "multirotor",
+  "vehicle_class": "uav_multirotor",
+  "control_model": {
+    "mass_kg": 2.0,
+    "max_total_lift_n": 34.0
+  }
+}

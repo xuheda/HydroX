@@ -1,5 +1,5 @@
 /**
- * tcp_transport.cpp - TCP transport layer for HydroX HIL/SITL.
+ * tcp_transport.cpp - TCP transport layer for HydroX SITL/HITL.
  *
  * Cross-platform: POSIX (Linux/macOS) and Windows (Winsock2)
  */
@@ -188,6 +188,54 @@ namespace hydrox
             return -1;
         }
         return n;
+    }
+
+    int TcpTransport::wait_readable(int timeout_ms)
+    {
+        if (_client == INVALID_SOCKET_VAL)
+            return -1;
+
+#ifdef _WIN32
+        WSAPOLLFD descriptor{};
+        descriptor.fd = _client;
+        descriptor.events = POLLRDNORM;
+        const int result = ::WSAPoll(&descriptor, 1, std::max(0, timeout_ms));
+        if (result == SOCKET_ERROR)
+        {
+            _close_client();
+            return -1;
+        }
+        if (result == 0)
+            return 0;
+        if ((descriptor.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0)
+        {
+            _close_client();
+            return -1;
+        }
+        return (descriptor.revents & (POLLRDNORM | POLLIN)) != 0 ? 1 : 0;
+#else
+        pollfd descriptor{};
+        descriptor.fd = _client;
+        descriptor.events = POLLIN;
+        int result = 0;
+        do
+        {
+            result = ::poll(&descriptor, 1, std::max(0, timeout_ms));
+        } while (result < 0 && errno == EINTR);
+        if (result < 0)
+        {
+            _close_client();
+            return -1;
+        }
+        if (result == 0)
+            return 0;
+        if ((descriptor.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0)
+        {
+            _close_client();
+            return -1;
+        }
+        return (descriptor.revents & POLLIN) != 0 ? 1 : 0;
+#endif
     }
 
     bool TcpTransport::write(const uint8_t *buf, size_t len)

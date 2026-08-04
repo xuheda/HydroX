@@ -1,0 +1,9 @@
+{
+  "magic": "PX4FWv1",
+  "board_id": 56,
+  "board_revision": 0,
+  "image_maxsize": 1966080,
+  "summary": "HydroX HITL for Pixhawk 6C Mini / FMUv6C",
+  "description": "HITL-only HydroX firmware. TELEM1 carries MAVLink HIL; TELEM2 carries companion setpoints. Physical actuator drivers are excluded.",
+  "version": "0.1.0"
+}

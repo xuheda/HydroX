@@ -1,0 +1,13 @@
+{
+  "name": "EcaA9 adverse-current depth-stair collection",
+  "description": "Baseline GNC data: depth transitions under an adverse current.",
+  "scenario": "learning/scenarios/ecaa9_training.json",
+  "vehicle_names": ["ecaa9_train"],
+  "bringup": {"vehicle_names": ["ecaa9_train"], "start_fleet_manager": false, "start_formation": false, "start_pursuit": false, "start_visualization": false, "default_source": "auto", "state_timeout_sec": 6.0, "source_timeout_sec": 4.0},
+  "ready": {"timeout_sec": 90, "per_call_timeout_sec": 8, "strict": true, "require_topic_messages": true, "topics": ["/hydrox/ecaa9_train/out/auv_state"], "actions": ["/oceanx/ecaa9_train/mission/follow_waypoints"]},
+  "acts": [
+    {"at": 0, "type": "wait_ready", "name": "EcaA9 stack ready"},
+    {"at": 5, "type": "follow_waypoints", "name": "adverse-current depth stairs", "vehicle": "ecaa9_train", "waypoints": [{"x": 28.0, "y": 0.0, "z": 90.0}, {"x": 56.0, "y": 16.0, "z": 112.0}, {"x": 84.0, "y": -16.0, "z": 92.0}, {"x": 112.0, "y": 0.0, "z": 110.0}], "speed": 1.1, "radius": 5.0, "loop": false, "wait": false},
+    {"at": 230, "type": "topic_snapshot", "name": "final state", "topics": ["/hydrox/ecaa9_train/out/auv_state"], "timeout_sec": 6}
+  ]
+}

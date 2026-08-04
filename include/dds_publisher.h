@@ -72,7 +72,9 @@ namespace hydrox
         bool connected_{false};
         uint32_t health_miss_count_{0};
         std::chrono::steady_clock::time_point next_health_check_{};
-        static constexpr uint32_t HEALTH_MISS_LIMIT = 3;
+        // A shared local Agent serves every vehicle.  A short scheduling pause
+        // must not make all clients reconnect at once and amplify the pause.
+        static constexpr uint32_t HEALTH_MISS_LIMIT = 5;
 
         uxrObjectId participant_id_{};
         uxrObjectId pub_id_{};
@@ -80,7 +82,7 @@ namespace hydrox
         uxrObjectId dw_sensor_id_{};
         uxrObjectId dw_actuator_id_{};
         uxrObjectId dw_status_id_{};
-        uxrObjectId dw_auv_state_id_{};
+        uxrObjectId dw_state_estimate_id_{};
         uxrObjectId dw_truth_state_id_{};
         uxrObjectId dw_odom_id_{};
         uxrObjectId dw_tf_id_{};
@@ -98,6 +100,8 @@ namespace hydrox
         uint32_t serialization_failure_count_{0};
         uint32_t stream_full_failure_count_{0};
         uint64_t last_status_pub_us_{0};
+        uint64_t last_snapshot_pub_us_{0};
+        uint64_t last_diagnostics_pub_us_{0};
         uint64_t last_truth_state_pub_us_{0};
         uint64_t last_odom_tf_pub_us_{0};
         uint64_t last_passive_sonar_pub_us_{0};
@@ -106,6 +110,10 @@ namespace hydrox
 
         static constexpr uint64_t STATUS_PERIOD_US =
             dds_topics::period_us(dds_topics::kVehicleStatus);
+        static constexpr uint64_t SNAPSHOT_PERIOD_US =
+            dds_topics::period_us(dds_topics::kStateEstimate);
+        static constexpr uint64_t DIAGNOSTICS_PERIOD_US =
+            dds_topics::period_us(dds_topics::kVehicleLocalPosition);
         static constexpr uint64_t TRUTH_STATE_PERIOD_US =
             dds_topics::period_us(dds_topics::kTruthState);
         static constexpr uint64_t ODOM_TF_PERIOD_US =

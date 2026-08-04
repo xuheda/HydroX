@@ -49,40 +49,52 @@ int main()
     using hydrox::GNCMode;
     using hydrox::VehicleArchetype;
     using hydrox::VehicleClass;
+    using hydrox::sitl::ControlFeedbackSource;
 
     int failures = 0;
 
     const auto defaults = parse({"hydrox_sitl"});
     failures += expect(defaults.ue5_port == 14600, "default UE5 port");
     failures += expect(defaults.rate_hz == 100, "default control rate");
-    failures += expect(defaults.time_mode == "hil", "default HIL time mode");
     failures += expect(defaults.xlog == "auto", "default XLog mode");
+    failures += expect(!defaults.publish_truth_state,
+                       "truth publishing defaults off");
+    failures += expect(!defaults.allow_truth_heading_aid,
+                       "truth heading aid defaults off");
+    failures += expect(
+        defaults.control_feedback_source == ControlFeedbackSource::EstimatedState,
+        "control feedback defaults to estimated state");
 
     const auto configured = parse({
         "hydrox_sitl",
         "--ue5-port", "14605",
         "--ros-domain-id", "17",
-        "--vehicle", "auv5",
+        "--vehicle", "vehicle5",
         "--vehicle-type", "LAUV",
+        "--vehicle-bundle", "profiles/generic-auv-fin/vehicle-bundle.json",
         "--rate", "200",
-        "--time-mode", "wall",
         "--mavlink-signing-key-file", "D:/secure/hil.key",
         "--mavlink-signing-link-id", "42",
         "--publish-truth-state", "true",
         "--allow-truth-heading-aid", "1",
+        "--control-feedback-source", "truth_debug",
     });
     failures += expect(configured.ue5_port == 14605, "configured UE5 port");
     failures += expect(configured.ros_domain_id == 17, "configured DDS domain");
-    failures += expect(configured.vehicle == "auv5", "configured vehicle name");
+    failures += expect(configured.vehicle == "vehicle5", "configured vehicle name");
     failures += expect(configured.vehicle_type == "LAUV", "configured vehicle type");
+    failures += expect(configured.vehicle_bundle == "profiles/generic-auv-fin/vehicle-bundle.json",
+                       "configured vehicle bundle");
     failures += expect(configured.rate_hz == 200, "configured control rate");
-    failures += expect(configured.time_mode == "wall", "configured wall time mode");
     failures += expect(configured.mavlink_signing_key_file == "D:/secure/hil.key",
                        "configured MAVLink signing key file");
     failures += expect(configured.mavlink_signing_link_id == 42,
                        "configured MAVLink signing link id");
     failures += expect(configured.publish_truth_state, "truth publishing flag");
     failures += expect(configured.allow_truth_heading_aid, "truth heading aid flag");
+    failures += expect(
+        configured.control_feedback_source == ControlFeedbackSource::TruthDebug,
+        "explicit truth debug control feedback");
 
     failures += expect(parse_fails({"hydrox_sitl", "--rate"}),
                        "missing option value is rejected");
@@ -94,10 +106,13 @@ int main()
                        "out-of-range DDS domain is rejected");
     failures += expect(parse_fails({"hydrox_sitl", "--rate", "0"}),
                        "non-positive rate is rejected");
-    failures += expect(parse_fails({"hydrox_sitl", "--time-mode", "auto"}),
-                       "unknown time mode is rejected");
+    failures += expect(parse_fails({"hydrox_sitl", "--time-mode", "hil"}),
+                       "removed time-mode option is rejected");
     failures += expect(parse_fails({"hydrox_sitl", "--mavlink-signing-link-id", "256"}),
                        "out-of-range MAVLink signing link id is rejected");
+    failures += expect(
+        parse_fails({"hydrox_sitl", "--control-feedback-source", "automatic"}),
+        "unknown control feedback source is rejected");
 
     failures += expect(
         hydrox::sitl::gnc_mode_from_string("WAYPOINT_3D") == GNCMode::WAYPOINT_3D,

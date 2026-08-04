@@ -19,8 +19,9 @@ namespace hydrox
         struct Params
         {
             double rho = 1028.0;
-            // Values are loaded by fossen_vehicle_params.cpp from engine/Content/Fossen JSON.
-            // These zero-defaults will cause divide-by-zero if used without initialization.
+            // Values are supplied by a VehicleBundle control model (or by an
+            // explicitly loaded legacy compatibility file). These zero-defaults
+            // will cause divide-by-zero if used without initialization.
             double S_fin = 0.0;          // fin planform area (m²)
             double CL_s = 0.0;           // 3-D elevator lift slope /rad
             double CL_r = 0.0;           // 3-D rudder lift slope /rad

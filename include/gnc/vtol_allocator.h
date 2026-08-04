@@ -14,11 +14,19 @@ namespace hydrox
         struct Params
         {
             double max_total_lift_N = 180.0;
-            double roll_scale = 0.08;
-            double pitch_scale = 0.08;
+            // StandardVTOL: arm = 0.495 / sqrt(2) m and total lift = 180 N.
+            // The thrust-space differential needed for one N*m is therefore
+            // 1 / (arm * total_lift) ~= 0.016.  The former 0.08 values made
+            // short waypoint commands apply about five times the requested
+            // roll/pitch moment and destabilised hover flight.
+            double roll_scale = 0.016;
+            double pitch_scale = 0.016;
             double yaw_scale = 0.05;
             double surface_gain = 1.0;
-            double pusher_trim = 0.15;
+            // A fixed pusher trim can force a short hover translation through
+            // the airspeed transition before the lift-rotor loop has settled.
+            // Keep the pusher off at zero speed error; it is driven by pusher_kp.
+            double pusher_trim = 0.0;
             double pusher_kp = 0.08;
         };
 

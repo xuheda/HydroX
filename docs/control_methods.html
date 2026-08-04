@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HydroX 底层控制方法与自由度耦合分析 · HydroX 文档</title>
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <header class="site-header"><div class="site-header__inner"><a class="site-title" href="index.html">HydroX 文档</a></div></header>
+  <main><article><h1 id="hydrox-底层控制方法与自由度耦合分析">HydroX 底层控制方法与自由度耦合分析</h1>
+<p>更新日期：2026-07-28</p>
+<p><a href="index.html">返回 HydroX 文档首页</a> · <a href="../../doc/index.html">OceanX 集成文档</a></p>
+<p>本文记录 HydroX 自驾仪 <code>gnc</code> 模块各载具原型(archetype)采用的底层控制方法, 以及每种原型的六自由度(6-DOF)驱动/耦合情况。高层职责边界见 <a href="control_architecture.html">控制架构</a>，ROS/DDS 接口见 <a href="ros_interfaces.html">OceanX ROS 2 话题与接口契约</a>，动力学模型见 <a href="../../doc/internal/vehicle_dynamics.html">OceanX 载具动力学与接入</a>。</p>
+<h2 id="1-控制契约-tau-合同">1. 控制契约:tau-合同</h2>
+<p>整个控制栈围绕一个广义力契约解耦"控制律"与"执行器布局" (见 <a href="../include/gnc/control_interfaces.h">control_interfaces.h</a>):</p>
+<pre><code class="language-text">IController :  state + setpoint  -&gt;  Wrench tau = [X, Y, Z, K, M, N]
+IAllocator :  tau               -&gt;  ActuatorCmd (归一化 [-1,1] 通道)</code></pre>
+<ul><li><code>tau</code>:机体系 NED 广义力/力矩,<code>[X, Y, Z, K, M, N]</code>(N、N·m)。</li><li>控制律只知道如何产生 <code>tau</code>(且只填它能驱动的那几个分量)。</li><li>分配器只知道如何把 <code>tau</code> 映射到具体执行器,耦合在这一层被几何解算。</li></ul>
+<p>一个载具 = 一个 <code>IController</code> 原型 + 一个 <code>IAllocator</code> 布局,由载具 profile 在 <a href="../src/gnc/control_factory.cpp">control_factory.cpp</a> 中装配。状态定义见 <a href="../include/types.h">types.h</a>:<code>eta=[N,E,D,roll,pitch,yaw]</code>、 <code>nu=[u,v,w,p,q,r]</code>。</p>
+<h2 id="2-五种控制原型一览">2. 五种控制原型一览</h2>
+<table><thead><tr><th>原型</th><th>典型载具</th><th>控制律</th><th>分配器</th><th>驱动性质</th></tr></thead><tbody><tr><td>SlenderBodyAUV</td><td>EcaA9 / LAUV</td><td>级联 PID + 滑模(SMC)</td><td>FinAllocator</td><td>欠驱动(3/6)</td></tr><tr><td>Thruster</td><td>DesistekSaga / RexROV2</td><td>逐轴加速度级 PD</td><td>ThrusterMatrixAllocator</td><td>全/过驱动</td></tr><tr><td>Surface</td><td>SurfaceVessel / USV</td><td>纵荡 + 艏摇 PD</td><td>TwinScrewAllocator</td><td>欠驱动(2/3)</td></tr><tr><td>Multirotor</td><td>四旋翼 UAV</td><td>位置→姿态级联 PD</td><td>QuadrotorAllocator</td><td>欠驱动(4/6)</td></tr><tr><td>FixedWing</td><td>固定翼 UAV</td><td>倾斜转弯(bank-to-turn)</td><td>FixedWingAllocator</td><td>欠驱动</td></tr></tbody></table>
+<p>下面逐一展开。</p>
+<hr>
+<h2 id="3-slenderbodyauv-鱼雷型-auv-级联-滑模">3. SlenderBodyAUV — 鱼雷型 AUV(级联 + 滑模)</h2>
+<p>源码:<a href="../src/gnc/gnc_controller.cpp">gnc_controller.cpp</a>、 <a href="../src/gnc/control_allocator.cpp">control_allocator.cpp</a>。</p>
+<p>细长体 AUV 欠驱动:只有尾部螺旋桨 + 十字/X 尾舵,无法直接产生侧向力、 垂向力或滚转力矩。它只填 <code>tau</code> 的 3 个分量:<code>X</code>(纵荡)、<code>M</code>(俯仰)、<code>N</code>(艏摇)。</p>
+<h3 id="3-1-三条控制回路">3.1 三条控制回路</h3>
+<table><thead><tr><th>回路</th><th>方法</th><th>文件</th><th>输出</th></tr></thead><tbody><tr><td>纵荡 X</td><td>P/PI 速度控制(实为带抗饱和的 PID)</td><td><a href="../include/gnc/surge_p.h">surge_p.h</a></td><td><code>tau_X</code></td></tr><tr><td>深度→俯仰</td><td>级联:外环深度 PID,内环俯仰 PID</td><td><a href="../src/gnc/depth_pid.cpp">depth_pid.cpp</a> / <a href="../include/gnc/pitch_pid.h">pitch_pid.h</a></td><td><code>tau_M</code></td></tr><tr><td>艏摇 N</td><td>积分滑模(SMC) 或 偏航角速率跟踪 PI+前馈</td><td><a href="../src/gnc/heading_smc.cpp">heading_smc.cpp</a></td><td><code>tau_N</code></td></tr></tbody></table>
+<p>这三条回路共同回答一个问题:细长体 AUV 只能有效驱动 <code>X/M/N</code>,那么控制器应该如何把任务误差 转成这三个广义力分量。纵荡环负责“快慢”,深度-俯仰级联负责“上浮/下潜”,艏摇环负责“朝向”。 控制律只输出 <code>tau_X/tau_M/tau_N</code>;具体舵角、桨速由后面的 FinAllocator 处理。</p>
+<p>纵荡 X:速度误差 -&gt; 前向力 <code>tau_X</code></p>
+<p>纵荡环控制的是机体系前向速度 <code>u</code>。上层给出期望速度 <code>surge_ref</code>,传感/状态估计给出当前速度 <code>surge</code>,控制器先形成速度误差:</p>
+<pre><code class="language-text">e_u = surge_ref - surge</code></pre>
+<p><code>SurgeP</code> 名字里虽然是 P,实际是带工程保护的速度 PID:</p>
+<pre><code class="language-text">tau_X = drag_ff·surge_ref·|surge_ref| + kp·e_u + ki·∫e_u dt - kd·surge</code></pre>
+<ul><li><code>kp·e_u</code>:速度低于目标时给正推力,速度高于目标时减推或制动。</li><li><code>ki·∫e_u dt</code>:补偿稳态阻力,避免长期低于目标速度。</li><li><code>-kd·surge</code>:用当前速度做阻尼,抑制过冲。</li><li><code>drag_ff·v|v|</code>:把水阻主要项提前补进去,让积分项只负责修正误差。</li><li>积分限幅、误差变号退绕、超速制动和推力斜率限制用于处理执行器饱和与速度切换。</li></ul>
+<p>所以纵荡链路是:</p>
+<pre><code class="language-text">surge_ref, surge -&gt; 速度 PID/阻力前馈 -&gt; tau_X -&gt; 螺旋桨转速</code></pre>
+<p>它是整条鱼雷型 AUV 控制链的基础,因为尾舵舵效依赖动压 <code>q∝u²</code>;没有足够前向速度, 后面的俯仰和艏摇舵控都会变弱。</p>
+<p>深度 -&gt; 俯仰:深度误差 -&gt; 期望俯仰角 -&gt; 俯仰力矩 <code>tau_M</code></p>
+<p>细长体 AUV 通常没有独立垂向推进器,不能像 ROV 那样直接输出 <code>tau_Z</code> 来定深。它的定深机理是: 先让艇产生合适的俯仰角,再利用前进速度和舵面升力改变下潜/上浮趋势。因此这里采用两级闭环:</p>
+<pre><code class="language-text">depth_ref, depth, heave_rate
+    -&gt; 外环 DepthPID
+    -&gt; theta_ref(期望俯仰角)
+    -&gt; 内环 PitchPID
+    -&gt; tau_M
+    -&gt; 水平舵差动</code></pre>
+<p>外环先用三阶参考模型把 <code>depth_ref</code> 平滑成内部参考 <code>_ref.xd/_ref.vd</code>,避免深度命令阶跃导致 俯仰角突变。然后计算:</p>
+<pre><code class="language-text">e_z     = depth - depth_ref_smooth
+e_z_dot = heave_rate - depth_rate_ref_smooth
+theta_ref = kp·e_z + kd·e_z_dot + ki·∫e_z dt</code></pre>
+<p>这里的输出不是力,而是期望俯仰角 <code>theta_ref</code>。如果当前深度比目标浅,外环会给出一个下潜方向的 俯仰角;如果当前深度比目标深,则给出上浮方向的俯仰角。<code>theta_ref</code> 会被 <code>theta_max≈15°</code> 限幅, 避免为了追深度而要求过大的姿态。</p>
+<p>内环再让真实俯仰角 <code>pitch</code> 跟踪 <code>theta_ref</code>:</p>
+<pre><code class="language-text">e_theta = theta_ref - pitch
+tau_M = kp·e_theta - kd·pitch_rate + ki·∫e_theta dt</code></pre>
+<p>也就是说,外环回答“为了修正深度,艇头应该抬/压多少”,内环回答“为了达到这个俯仰角,水平舵应该 产生多大俯仰力矩”。近水面时 <code>theta_ref</code> 会渐隐,避免艇在水面附近被控制器强行压下去。</p>
+<p>艏摇 N:航向/角速率误差 -&gt; 偏航力矩 <code>tau_N</code></p>
+<p>艏摇环有两种工作方式。普通航向保持时,目标是让当前航向 <code>heading</code> 跟踪 <code>heading_ref</code>; 策略如果直接给角速率,则切到 yaw-rate 跟踪。</p>
+<p>航向保持使用积分滑模控制。它先通过三阶参考模型把 <code>heading_ref</code> 平滑成期望航向和期望角速率, 再计算航向误差和角速率误差:</p>
+<pre><code class="language-text">e_psi = ssa(heading_ref_smooth - heading)
+e_r   = yaw_rate_ref_smooth - yaw_rate</code></pre>
+<p><code>ssa()</code> 把角度误差折回 <code>[-π, π]</code>,避免例如 <code>359° -&gt; 1°</code> 被误判成大转弯。然后构造滑模面:</p>
+<pre><code class="language-text">sigma = e_r + kd·e_psi + ks·ei        (滑模面,带积分项)
+ei = ∫e_psi dt</code></pre>
+<p>滑模面的含义是把“航向误差、角速率误差、长期偏差”合成一个收敛指标。控制器希望 <code>sigma -&gt; 0</code>: 只要 <code>sigma</code> 不为零,就给一个把系统推回滑模面的偏航力矩。实际输出为:</p>
+<pre><code class="language-text">tau_N = T·(wn·e_r - kd·r)/K + ks·sat(sigma/phi_b)/K</code></pre>
+<ul><li>前半项来自一阶 Nomoto 转艏模型的逆模型/前馈,用于给出预期转艏所需力矩。</li><li>后半项 <code>sat(sigma/phi_b)</code> 是滑模反馈,用于抵抗水动力参数误差和外界扰动。</li><li>使用 <code>sat()</code> 边界层而不是硬符号函数,是为了减少滑模控制常见的抖振。</li></ul>
+<p>所以航向链路是:</p>
+<pre><code class="language-text">heading_ref, heading, yaw_rate -&gt; 参考模型/SMC -&gt; tau_N -&gt; 垂直舵差动</code></pre>
+<p>当 setpoint 为 <code>use_yaw_rate_ref</code> 时,控制目标从“到某个航向角”变成“跟踪某个偏航角速度”。 这时控制器使用 PI + 前馈:先对角速率参考做一阶滤波和斜率限制,再用角速率误差积分消除 稳态偏差,同时用前馈提高响应速度。</p>
+<p>Nomoto 与 Fossen 的关系:控制用低阶模型 vs 动力学真模型</p>
+<p>Nomoto 模型来自 Nomoto 等人的船舶操纵性研究,本质上是一类面向操纵控制的低阶线性模型。 它不只可以写艏摇;在完整操纵性建模里,水平面可以包含横荡-艏摇 <code>v/r</code>,垂直面也可以包含 垂荡-俯仰 <code>w/q</code>。这些模型都是从更完整的船体水动力方程在某个工作点附近线性化、降阶或 辨识得到的。</p>
+<p>本控制器当前使用的是其中最常见、最轻量的一阶转艏 Nomoto 形式,只把“控制输入如何影响 偏航角速度 <code>r</code>”抽出来作为艏向控制的内部模型:</p>
+<pre><code class="language-text">T·r_dot + r = K·delta        (舵角输入形式)
+T·r_dot + r = K·tau_N        (等效艏摇力矩形式)</code></pre>
+<p>其中 <code>T</code> 是转艏时间常数,<code>K</code> 是转艏增益。它是线性模型,适用于固定航速附近、小舵角、 小侧滑/小扰动的工作点;真实舵效、横荡-艏摇耦合、垂荡-俯仰耦合和非线性阻尼等影响, 在一阶转艏形式里被压缩进 <code>T/K</code> 或被外层反馈吸收。</p>
+<p>Fossen 模型不是被 Nomoto 替代。OceanX 的主动力学仍是完整 6DOF Fossen 方程:</p>
+<pre><code class="language-text">M·nu_dot + C(nu_r)·nu_r + D(nu_r)·nu_r + g(eta)
+  = tau_control + tau_environment</code></pre>
+<p>因此二者的关系是解耦的模型分层:</p>
+<pre><code class="language-text">HeadingSMC 内部: 用 Nomoto 逆模型估计需要的 tau_N
+FinAllocator   : 把 tau_N 分配成垂直舵差动
+Fossen 6DOF    : 接收执行器 wrench,积分得到真实 yaw_rate/heading
+反馈           : Fossen 状态再回到控制器</code></pre>
+<p>可以把 Nomoto 看成控制器的“脑内简化模型”,把 Fossen 看成仿真/实艇侧的被控对象模型。 控制器不需要背完整 Fossen 6DOF 方程,只需要通过 <code>tau_N</code> 接口提出艏摇力矩需求;Fossen 则负责 真实的附加质量、阻尼、耦合、浮力和环境扰动响应。如果 Nomoto 的 <code>T/K</code> 和 Fossen 的实际响应 有偏差,滑模反馈项会补偿一部分模型误差。若航速范围很大,更好的做法是从 Fossen 阶跃响应或 实艇试验中辨识 <code>T/K</code>,甚至做成速度调度参数 <code>T(u), K(u)</code>。</p>
+<p>结论上,这不是“所有 AUV 都通用的唯一最优解”:如果艇型变成悬停 ROV、全驱动多推进器平台, 深度控制就应该直接走 <code>tau_Z</code>;如果追求强约束最优轨迹,可以进一步引入 MPC。但对本节描述的 SlenderBodyAUV,这三环就是当前最匹配的工程控制组合,后续优化应优先围绕前馈、速度调度、 抗饱和和分配器约束展开,而不是轻易推翻这套闭环结构。</p>
+<h3 id="3-2-finallocator-舵-桨分配">3.2 FinAllocator — 舵/桨分配</h3>
+<p><a href="../src/gnc/control_allocator.cpp">control_allocator.cpp</a> 把 <code>tau</code> 反解为舵偏与转速:</p>
+<ul><li>螺旋桨:<code>tau_X</code> → 转速,<code>n = sign·√(|tau_X|/kT)</code>,<code>kT = KT_0·ρ·D⁴</code>。</li><li>水平舵(ss/ps):由动压 <code>q = ½ρu²</code> 反解 <code>delta_z</code>(垂向力)与 <code>delta_m</code>(俯仰),</li></ul>
+<p>以差动叠加:<code>delta_ss=(delta_z+delta_m)/2</code>、<code>delta_ps=(delta_z-delta_m)/2</code>。</p>
+<ul><li>垂直舵(br/tr):由 <code>tau_N</code> 反解 <code>delta_r</code>,差动:<code>delta_br=delta_r/2</code>、<code>delta_tr=-delta_r/2</code>。</li></ul>
+<p>注意舵效正比于动压 <code>q∝u²</code>:低速时除以 <code>q</code> 会放大舵偏 → 舵权丧失。这是纵荡速度与 俯仰/艏摇舵权之间的关键耦合(见 §8)。</p>
+<h3 id="3-3-惯量归一化增益">3.3 惯量归一化增益</h3>
+<p><a href="../src/fossen_vehicle_params.cpp">fossen_vehicle_params.cpp</a> 的 <code>apply_inertia_normalized_gains</code> 以参考载具(<code>M44=25.68, mass=71.5</code>)为基准缩放增益: 俯仰/偏航增益 ×<code>M44/25.68</code>,纵荡增益 ×<code>mass/71.5</code>。这样不同体量的 AUV 获得一致的闭环响应。</p>
+<h3 id="3-4-面向物理参数的逐车调参">3.4 面向物理参数的逐车调参</h3>
+<p>不同 AUV 的质量、惯量、舵面积、力臂、螺旋桨能力和水动力阻尼不同，控制参数不能被当作与载具无关的常数。OceanX 使用与 UE Fossen 主积分相同的参数源：</p>
+<pre><code class="language-text">engine/Content/Fossen/&lt;vehicle&gt;_params.json</code></pre>
+<p>推荐流程：</p>
+<pre><code class="language-text">载具几何、惯量、水动力和执行器参数
+  -&gt; 按 mass / pitch inertia 生成归一化基线
+  -&gt; 选择 settling time、damping ratio、姿态和舵面饱和预算
+  -&gt; 运行固定 depth / heading / surge maneuver
+  -&gt; 评估跟踪误差、瞬态峰值、收敛时间和执行器饱和
+  -&gt; 必要时写入 vehicle-specific control override</code></pre>
+<p>物理限制包括舵面面积/最大偏角、升力斜率、推进器推力/RPM、质量、惯量和阻尼；<code>depth.theta_max</code>、<code>pitch.kp/kd</code>、<code>heading.wn/kd</code>、<code>surge.kp</code> 等属于控制器响应和保护参数。<code>theta_max</code> 是 depth 外环允许输出的最大俯仰命令，不是载具姿态硬限制。</p>
+<p>闭环调参至少记录：</p>
+<table><thead><tr><th>指标</th><th>含义</th></tr></thead><tbody><tr><td><code>depth_err</code> / <code>depth_peak</code></td><td>稳态和瞬态深度误差</td></tr><tr><td><code>w_peak</code> / <code>pitch_peak</code></td><td>垂向速度和最大俯仰角</td></tr><tr><td><code>fin_sat</code></td><td>舵面接近饱和的样本比例</td></tr><tr><td><code>heading_err</code></td><td>稳态航向误差</td></tr><tr><td><code>surge</code></td><td>稳态纵荡速度</td></tr><tr><td><code>dvl_valid</code></td><td>速度估计输入是否有效</td></tr></tbody></table>
+<p>调参必须检查 sensor → estimator → controller → allocator → actuator 整条链路。EcaA9 曾出现的俯仰振荡和 surge 异常并非纯增益问题：DVL 无效会触发零速度伪观测，先修复测量/估计有效性后才有意义继续调节控制 override。工程目标是“physics-aware initialization + simulation-metric-guided calibration”，不是宣称全局最优自动调参。</p>
+<hr>
+<h2 id="4-thruster-rov-悬停-auv-逐轴-pd-矩阵分配">4. Thruster — ROV / 悬停 AUV(逐轴 PD + 矩阵分配)</h2>
+<p>源码:<a href="../src/gnc/thruster_controller.cpp">thruster_controller.cpp</a>、 <a href="../src/gnc/thruster_allocator.cpp">thruster_allocator.cpp</a>。</p>
+<p>矢量推进 ROV 全驱动或过驱动,可独立控制 6 个轴。控制律是逐轴解耦的 加速度级 PD,再乘以载具质量得到力/力矩:</p>
+<pre><code class="language-text">accel = clamp(kp·err - kd·rate, accel_max);   tau_axis = mass · accel</code></pre>
+<table><thead><tr><th>轴</th><th>默认增益 <code>{kp,kd,accel_max}</code></th><th>行为</th></tr></thead><tbody><tr><td>纵荡 X</td><td><code>{0.6, 0.8, 2.0}</code></td><td>跟踪 <code>surge_ref</code></td></tr><tr><td>横荡 Y</td><td><code>{0.0, 0.5, 1.0}</code></td><td>纯阻尼(把横向速度压到 0)</td></tr><tr><td>垂荡 Z</td><td><code>{0.6, 1.6, 3.0}</code></td><td>直接垂向推力定深</td></tr><tr><td>滚转 K</td><td><code>{0, 0, 0}</code></td><td>默认被动(关闭)</td></tr><tr><td>俯仰 M</td><td><code>{0, 0, 0}</code></td><td>默认被动(关闭)</td></tr><tr><td>艏摇 N</td><td><code>{1.0, 1.2, 2.0}</code></td><td>定向或角速率跟踪</td></tr></tbody></table>
+<p>与细长体 AUV 截然不同:深度由直接垂向推力(Z)实现,而非俯仰。滚转/俯仰默认 增益为 0——多数 ROV 因 CoB 高于 CoG 而被动稳定,欠驱动型(如 DesistekSaga 仅 3 个推进器, 只能产生 surge/yaw/heave)根本无法产生滚转/俯仰力矩,强行指令只会与分配器对抗。</p>
+<p>ThrusterMatrixAllocator 是真正解算耦合的地方。它由各推进器的位置/方向构造 6×n 配置矩阵 <code>B</code>,用阻尼最小二乘伪逆分配:</p>
+<pre><code class="language-text">B 的第 i 列 = [ dir_i ; pos_i × dir_i ]      (单位推力 -&gt; 机体 wrench)
+u = Bᵀ (B Bᵀ + λI)⁻¹ tau                    (每个推进器的推力)</code></pre>
+<p>由于每个推进器同时贡献力与力矩,轴间耦合在伪逆中被自动分配。三种布局在 <a href="../src/gnc/control_factory.cpp">control_factory.cpp</a> 中给定: 8 推进器矢量布局、DesistekSaga(3 推)、RexROV2(6 推)。</p>
+<hr>
+<h2 id="5-surface-水面无人艇-纵荡-艏摇-pd">5. Surface — 水面无人艇(纵荡 + 艏摇 PD)</h2>
+<p>源码:<a href="../src/gnc/surface_controller.cpp">surface_controller.cpp</a>、 <a href="../src/gnc/surface_allocator.cpp">surface_allocator.cpp</a>。</p>
+<p>水面艇是经典的 3-DOF 欠驱动(平面运动 surge/sway/yaw,但只驱动 surge 和 yaw):</p>
+<ul><li>纵荡:<code>tau_X = surge_kp·(surge_ref - u) - surge_kd·u</code>,增益 `surge_kp=3·mass,</li></ul>
+<p>surge_kd=1·mass`。</p>
+<ul><li>艏摇:航向 PD <code>tau_N = yaw_kp·ssa(psi_ref-psi) - yaw_kd·r</code>,或角速率跟踪。</li><li>横荡(Y)不控——靠艏摇间接对准。<code>WAYPOINT_3D</code> 模式下用 LOS 视线法</li></ul>
+<p><code>heading_ref = atan2(dE, dN)</code>,并按剩余距离限制 <code>surge_ref</code>。</p>
+<p>TwinScrewAllocator 双桨差动:</p>
+<pre><code class="language-text">port      = 0.5·X - 0.5·N/lever
+starboard = 0.5·X + 0.5·N/lever</code></pre>
+<p>纵荡来自双桨共模,艏摇来自双桨差模——这是欠驱动水面艇标准的 surge/yaw 解耦方式。</p>
+<hr>
+<h2 id="6-multirotor-四旋翼-位置-姿态级联">6. Multirotor — 四旋翼(位置→姿态级联)</h2>
+<p>源码:<a href="../src/gnc/multirotor_controller.cpp">multirotor_controller.cpp</a>、 <a href="../src/gnc/multirotor_allocator.cpp">multirotor_allocator.cpp</a>。</p>
+<p>四旋翼 欠驱动(4 个执行自由度驱动 6-DOF),水平移动必须靠倾转机体实现, 因此采用位置→姿态级联:</p>
+<pre><code class="language-text">水平位置误差 --[xy PD]--&gt; 期望加速度 --[/g, 旋转到机体]--&gt; roll_ref / pitch_ref
+                                                  |
+高度误差 --[z PD]--&gt; 总拉力 tau[2]                 v
+                                          姿态 PD --&gt; tau[3](K), tau[4](M)
+航向/角速率 --[yaw PD]--&gt; tau[5](N)</code></pre>
+<ul><li>高度:<code>tau[2] = mass·(g - z_accel_down)</code>,<code>z_accel_down</code> 由 z 轴 PD 限幅得到。</li><li>倾转耦合(显式):<code>pitch_ref = -acc_forward/g</code>、<code>roll_ref = acc_right/g</code>,均限幅到</li></ul>
+<p><code>max_tilt_rad</code>。这正是"前进需低头、右移需右滚"的平移-姿态耦合。</p>
+<ul><li>所有轴乘 <code>mass</code>。</li></ul>
+<p>QuadrotorAllocator 标准混控:<code>FL=T-R-P-Y, FR=T+R-P+Y, RR=T+R+P-Y, RL=T-R+P+Y</code>, 即拉力(共模)+ 滚转/俯仰/偏航(差模)叠加到四个电机。</p>
+<hr>
+<h2 id="7-fixedwing-固定翼-倾斜转弯">7. FixedWing — 固定翼(倾斜转弯)</h2>
+<p>源码:<a href="../src/gnc/fixedwing_controller.cpp">fixedwing_controller.cpp</a>、 <a href="../src/gnc/fixedwing_allocator.cpp">fixedwing_allocator.cpp</a>。</p>
+<p>固定翼强欠驱动,采用倾斜转弯(bank-to-turn):</p>
+<ul><li>高度 → 俯仰参考:<code>pitch_ref = clamp(-altitude_kp·d_err + altitude_kd·w, ...)</code>。</li><li>航向 → 滚转参考:<code>roll_ref = clamp(course_kp·ssa(heading_ref - psi), ...)</code>——</li></ul>
+<p>航向与滚转耦合:改变航向必须先压坡度,而非直接用方向舵。</p>
+<p>注意此原型中 <code>tau</code> 被复用为归一化执行器需求(非物理力):<code>X=速度目标, K=滚转目标,M=俯仰目标,N=偏航角速率</code>。FixedWingAllocator 据此直接映射到舵面: 升降舵=<code>kp·pitch</code>、副翼=<code>kp·roll</code>、方向舵=<code>kp·yaw_rate</code>、油门=<code>trim+kp·(speed-surge)</code>。</p>
+<hr>
+<h2 id="8-自由度耦合总览">8. 自由度耦合总览</h2>
+<h3 id="8-1-各原型-6-dof-驱动矩阵">8.1 各原型 6-DOF 驱动矩阵</h3>
+<p><code>●</code>=主动闭环控制;<code>○</code>=间接/被动达成;<code>-</code>=不控制。</p>
+<p>| 原型 | X 纵荡 | Y 横荡 | Z 垂荡 | K 滚转 | M 俯仰 | N 艏摇 | |---|:--:|:--:|:--:|:--:|:--:|:--:| | SlenderBodyAUV | ● | - | ○(经 M) | - | ● | ● | | Thruster (ROV) | ● | ●(阻尼) | ● | ○(可选) | ○(可选) | ● | | Surface (USV) | ● | - | n/a | n/a | n/a | ● | | Multirotor | ○(经 M) | ○(经 K) | ● | ● | ● | ● | | FixedWing | ●(油门) | - | ○(经 M) | ● | ● | ○(经 K) |</p>
+<h3 id="8-2-耦合机理分类">8.2 耦合机理分类</h3>
+<ol><li>欠驱动耦合(间接达成)<ul><li>AUV:深度 ← 俯仰 + 速度产生的舵升力(<code>tau_Z=0</code>,靠 M+X 实现 Z)。</li><li>多旋翼:水平移动 ← 机体倾转(X←M、Y←K)。</li><li>固定翼:转向 ← 滚转(N←K);爬升 ← 俯仰(Z←M)。</li><li>水面艇:对准航向 ← 艏摇(Y 不可控)。</li></ul></li></ol>
+<ol><li>级联耦合(刻意构造)<ul><li>AUV 深度回路:<code>深度 → 俯仰角 → 俯仰力矩</code>,外环输出是内环参考。</li><li>多旋翼:<code>位置 → 倾角参考 → 姿态力矩</code>。</li></ul></li></ol>
+<p>两者的外环都通过设定姿态参考驱动内环,深度/位置与姿态因此强耦合, 且共享同一组执行器(AUV 的 ss/ps 水平舵同时承担深度与俯仰)。</p>
+<ol><li>速度依赖耦合(气/水动力)<ul><li>AUV 舵效 ∝ 动压 <code>q=½ρu²</code>。低速时 <a href="../src/gnc/control_allocator.cpp">FinAllocator</a></li></ul></li></ol>
+<p>除以 <code>q</code> → 舵偏饱和、俯仰/艏摇舵权丧失。纵荡速度直接调制俯仰与艏摇的可控性。</p>
+<ul><li>固定翼同理:油门/空速决定舵面权限。</li></ul>
+<ol><li>分配级耦合(几何解算)<ul><li>ROV:每个推进器同时产生力与力矩,轴间耦合由 <code>B</code> 矩阵伪逆</li></ul></li></ol>
+<p><code>u = Bᵀ(BBᵀ+λI)⁻¹τ</code> 自动分配/解耦,阻尼项 <code>λ</code> 在接近奇异布局时保证数值稳定。</p>
+<ul><li>舵机/双桨:通过差动把单一物理量拆成两个轴(ss/ps→深度+俯仰,</li></ul>
+<p>br/tr→艏摇,port/starboard→纵荡+艏摇)。</p>
+<ol><li>转弯-速度耦合(AUV 专有补偿)<ul><li>急转弯会因诱导/侧滑阻力掉速。<code>turn_compensated_surge_ref</code> 在硬转弯时下调内环</li></ul></li></ol>
+<p>速度参考以贴合训练环境;另有按 <code>|r|·v_ref²</code> 的转弯阻力前馈(当前 <code>kTurnDragFF=0</code> 已禁用,见 <a href="../src/gnc/gnc_controller.cpp">gnc_controller.cpp</a> 的说明:该前馈会把速度顶到 ~4.6 m/s 致观测越界、策略 OOD)。</p>
+<h3 id="8-3-设计要点">8.3 设计要点</h3>
+<ul><li>耦合住在两层:控制律层(级联与交叉参考)与分配层(效率矩阵/差动)。新增几何</li></ul>
+<p>只需新增 <code>IAllocator</code>,控制律不变;新增可控自由度才需要新控制律。</p>
+<ul><li>不在 UE 侧加 PID 或奖励逻辑;坐标变换只在 MAVLink/DDS/ROS 边界做</li></ul>
+<p>（见 <a href="control_architecture.html">控制架构</a>。）</p>
+<h2 id="参考">参考</h2>
+<ul><li>T. I. Fossen, <em>Handbook of Marine Craft Hydrodynamics and Motion Control</em>, 2nd ed., 2021</li></ul>
+<p>(Nomoto 转艏模型 §8、三阶参考模型 §12.1、控制分配)。</p>
+<ul><li>T. A. Johansen and T. I. Fossen, "Control Allocation: A Survey," <em>Automatica</em>, 2013</li></ul>
+<p>(阻尼最小二乘伪逆分配)。</p>
+<p>以上为既有控制与分配理论,非项目独创性主张。</p></article></main>
+</body>
+</html>

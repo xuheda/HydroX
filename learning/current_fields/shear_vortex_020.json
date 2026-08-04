@@ -1,0 +1,24 @@
+{
+  "schema_version": 1.0,
+  "frame": "NED",
+  "enabled": true,
+  "base_velocity_ned_mps": [0.08, -0.06, 0.0],
+  "layer": {
+    "enabled": true,
+    "surface_velocity_ned_mps": [0.18, -0.10, 0.0],
+    "deep_velocity_ned_mps": [0.02, -0.02, 0.0],
+    "transition_depth_m": 100.0,
+    "transition_width_m": 12.0
+  },
+  "tide": {"enabled": true, "amplitude_scale": 0.20, "period_s": 180.0, "phase_deg": 35.0},
+  "vortices": [
+    {
+      "center_ned_m": [45.0, 0.0, 103.0],
+      "radius_m": 28.0,
+      "peak_tangential_velocity_mps": 0.10,
+      "clockwise": false,
+      "depth_center_m": 103.0,
+      "depth_half_extent_m": 25.0
+    }
+  ]
+}

@@ -14,7 +14,7 @@ namespace hydrox::sitl
 {
     struct XLogTickData
     {
-        const AUVState *state = nullptr;
+        const NavigationState *state = nullptr;
         const GNCSetpoint *setpoint = nullptr;
         const Wrench *wrench = nullptr;
         const ActuatorCmd *actuator = nullptr;

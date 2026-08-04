@@ -1,9 +1,35 @@
 cmake_minimum_required(VERSION 3.16)
-project(HydroX VERSION 0.1 LANGUAGES CXX)
+
+set(HYDROX_TARGET "HOST" CACHE STRING "HydroX build target")
+set_property(CACHE HYDROX_TARGET PROPERTY STRINGS HOST PIXHAWK6C_HITL)
+if(HYDROX_TARGET STREQUAL "STM32")
+  message(DEPRECATION
+    "HYDROX_TARGET=STM32 is deprecated; use HYDROX_TARGET=PIXHAWK6C_HITL")
+  set(HYDROX_TARGET "PIXHAWK6C_HITL" CACHE STRING "HydroX build target" FORCE)
+endif()
+
+if(HYDROX_TARGET STREQUAL "PIXHAWK6C_HITL")
+  project(HydroX VERSION 0.1 LANGUAGES C CXX ASM)
+else()
+  project(HydroX VERSION 0.1 LANGUAGES CXX)
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+add_subdirectory(platform/api)
+add_subdirectory(src/runtime)
+
+# The Pixhawk 6C HITL firmware is a separate NuttX build. Keep host
+# dependencies (Threads, OpenSSL, DDS workers, filesystem logging, and tests)
+# out of its configuration entirely.
+if(HYDROX_TARGET STREQUAL "PIXHAWK6C_HITL")
+  include(cmake/targets/pixhawk6c_hitl.cmake)
+  return()
+endif()
+
 find_package(Threads REQUIRED)
+add_subdirectory(platform/host)
 
 # ---------------------------------------------------------------------------
 # Build Options
@@ -12,6 +38,7 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 option(HYDROX_BUILD_TESTS "Build HydroX unit tests" ON)
+option(HYDROX_ENABLE_RESIDUAL_RL "Enable optional learned wrench residual hook in hydrox_sitl" OFF)
 
 if(MSVC)
   add_compile_options(/W3 /WX- /EHsc /utf-8)
@@ -99,14 +126,23 @@ FetchContent_MakeAvailable(uxr_client)
 # HydroX core library
 # ---------------------------------------------------------------------------
 set(HYDROX_CORE_SOURCES
+  src/geodesy.cpp
+  third_party/geographiclib-c/src/geodesic.cpp
   src/mavlink_hil.cpp
   src/mavlink_signing.cpp
+  src/estimation_profile.cpp
   src/sensor_adapter.cpp
   src/ekf.cpp
+  src/runtime/hil_runtime.cpp
+  src/runtime/hitl_supervisor.cpp
+  src/runtime/hitl_command_codec.cpp
+  src/learning/residual_rl.cpp
+  src/learning/control_shadow.cpp
   src/gnc/ref_model.cpp
   src/gnc/depth_pid.cpp
   src/gnc/pitch_pid.cpp
   src/gnc/heading_smc.cpp
+  src/gnc/inertia_gain_scaling.cpp
   src/gnc/control_allocator.cpp
   src/gnc/gnc_controller.cpp
   src/gnc/thruster_allocator.cpp
@@ -123,6 +159,7 @@ set(HYDROX_CORE_SOURCES
   src/dds_publisher.cpp
   src/dds_setpoint_codec.cpp
   src/fossen_vehicle_params.cpp
+  src/vehicle_bundle.cpp
   src/xlog_writer.cpp
 )
 
@@ -133,10 +170,17 @@ target_include_directories(hydrox PUBLIC
   $<INSTALL_INTERFACE:include>
   ${EIGEN3_INCLUDE_DIR}
 )
+target_include_directories(hydrox PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/third_party/geographiclib-c/src
+)
 
 target_compile_definitions(hydrox PUBLIC HYDROX_DDS_ENABLED)
 
-target_link_libraries(hydrox PUBLIC microxrcedds_client Threads::Threads)
+target_link_libraries(hydrox PUBLIC
+  hydrox_runtime_api
+  microxrcedds_client
+  Threads::Threads
+)
 
 if(WIN32)
   target_link_libraries(hydrox PUBLIC ws2_32 bcrypt)
@@ -159,21 +203,31 @@ add_executable(hydrox_sitl
 
 target_include_directories(hydrox_sitl PRIVATE src)
 target_compile_definitions(hydrox_sitl PRIVATE HYDROX_TRANSPORT_TCP)
-target_link_libraries(hydrox_sitl PRIVATE hydrox)
+if(HYDROX_ENABLE_RESIDUAL_RL)
+  target_compile_definitions(hydrox_sitl PRIVATE HYDROX_ENABLE_RESIDUAL_RL)
+endif()
+target_link_libraries(hydrox_sitl PRIVATE hydrox hydrox_platform_host)
 
 # ---------------------------------------------------------------------------
-# STM32 HIL target (Cross-compilation, requires toolchain specification)
-# cmake -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain_stm32h7.cmake -DHYDROX_TARGET=STM32 ..
+# HITL router (transparent MAVLink2 TCP <-> serial bridge)
 # ---------------------------------------------------------------------------
-if(HYDROX_TARGET STREQUAL "STM32")
-  add_executable(hydrox_pixhawk6c
-    apps/stm32/main.cpp
-    src/transport/uart_transport.cpp
-  )
-  target_include_directories(hydrox_pixhawk6c PRIVATE src)
-  target_compile_definitions(hydrox_pixhawk6c PRIVATE HYDROX_TRANSPORT_UART)
-  target_link_libraries(hydrox_pixhawk6c PRIVATE hydrox)
+add_executable(hydrox_hitl_router
+  apps/hitl_router/main.cpp
+  src/transport/tcp_transport.cpp
+)
+target_link_libraries(hydrox_hitl_router PRIVATE
+  hydrox_runtime_api
+  hydrox_platform_host
+)
+if(WIN32)
+  target_link_libraries(hydrox_hitl_router PRIVATE ws2_32)
 endif()
+
+# ---------------------------------------------------------------------------
+# Offline learning shadow replay (no transport, DDS, UE, or actuator authority)
+# ---------------------------------------------------------------------------
+add_executable(hydrox_control_shadow apps/control_shadow/main.cpp)
+target_link_libraries(hydrox_control_shadow PRIVATE hydrox)
 
 # ---------------------------------------------------------------------------
 # Tests
@@ -205,31 +259,91 @@ if(HYDROX_BUILD_TESTS)
   target_link_libraries(test_ue_control_session PRIVATE hydrox)
   add_test(NAME test_ue_control_session COMMAND test_ue_control_session)
 
+  add_executable(test_hil_runtime tests/test_hil_runtime.cpp)
+  target_link_libraries(test_hil_runtime PRIVATE hydrox)
+  add_test(NAME test_hil_runtime COMMAND test_hil_runtime)
+
+  add_executable(test_hitl_supervisor tests/test_hitl_supervisor.cpp)
+  target_link_libraries(test_hitl_supervisor PRIVATE hydrox)
+  add_test(NAME test_hitl_supervisor COMMAND test_hitl_supervisor)
+
+  add_executable(test_hitl_command_codec tests/test_hitl_command_codec.cpp)
+  target_link_libraries(test_hitl_command_codec PRIVATE hydrox)
+  add_test(NAME test_hitl_command_codec COMMAND test_hitl_command_codec)
+  add_executable(test_hitl_entry
+    tests/test_hitl_entry.cpp
+    apps/pixhawk6c_hitl/main.cpp
+  )
+  target_compile_definitions(test_hitl_entry PRIVATE
+    HYDROX_EMBEDDED=1
+    HYDROX_HITL_ONLY=1
+  )
+  target_link_libraries(test_hitl_entry PRIVATE hydrox)
+  add_test(NAME test_hitl_entry COMMAND test_hitl_entry)
+
   add_executable(test_fossen_vehicle_params tests/test_fossen_vehicle_params.cpp)
   target_link_libraries(test_fossen_vehicle_params PRIVATE hydrox)
   add_test(NAME test_fossen_vehicle_params COMMAND test_fossen_vehicle_params)
   set_tests_properties(test_fossen_vehicle_params PROPERTIES
-    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/..")
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+  set_tests_properties(test_fossen_vehicle_params PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
+  add_executable(test_vehicle_bundle tests/test_vehicle_bundle.cpp)
+  target_link_libraries(test_vehicle_bundle PRIVATE hydrox)
+  add_test(NAME test_vehicle_bundle COMMAND test_vehicle_bundle)
+  set_tests_properties(test_vehicle_bundle PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
   add_executable(test_air_allocators tests/test_air_allocators.cpp)
   target_link_libraries(test_air_allocators PRIVATE hydrox)
   add_test(NAME test_air_allocators COMMAND test_air_allocators)
 
+  add_executable(test_surface_controller tests/test_surface_controller.cpp)
+  target_link_libraries(test_surface_controller PRIVATE hydrox)
+  add_test(NAME test_surface_controller COMMAND test_surface_controller)
+
+  add_executable(test_thruster_allocator tests/test_thruster_allocator.cpp)
+  target_link_libraries(test_thruster_allocator PRIVATE hydrox)
+  add_test(NAME test_thruster_allocator COMMAND test_thruster_allocator)
+
+  add_executable(test_fixedwing_controller tests/test_fixedwing_controller.cpp)
+  target_link_libraries(test_fixedwing_controller PRIVATE hydrox)
+  add_test(NAME test_fixedwing_controller COMMAND test_fixedwing_controller)
+
   add_executable(test_ekf tests/test_ekf.cpp)
   target_link_libraries(test_ekf PRIVATE hydrox)
   add_test(NAME test_ekf COMMAND test_ekf)
 
-  add_executable(test_sitl_config tests/test_sitl_config.cpp)
+  add_executable(test_sitl_config
+    tests/test_sitl_config.cpp
+    src/sitl/sitl_config.cpp
+  )
+  target_include_directories(test_sitl_config PRIVATE src)
   target_link_libraries(test_sitl_config PRIVATE hydrox)
   add_test(NAME test_sitl_config COMMAND test_sitl_config)
 
-  add_executable(test_sitl_xlog tests/test_sitl_xlog.cpp)
+  add_executable(test_control_feedback tests/test_control_feedback.cpp)
+  target_include_directories(test_control_feedback PRIVATE src)
+  target_link_libraries(test_control_feedback PRIVATE hydrox)
+  add_test(NAME test_control_feedback COMMAND test_control_feedback)
+
+  add_executable(test_sitl_xlog
+    tests/test_sitl_xlog.cpp
+    src/sitl/sitl_config.cpp
+    src/sitl/sitl_xlog.cpp
+  )
+  target_include_directories(test_sitl_xlog PRIVATE src)
   target_link_libraries(test_sitl_xlog PRIVATE hydrox)
   add_test(NAME test_sitl_xlog COMMAND test_sitl_xlog)
 
   add_executable(test_sensor_adapter tests/test_sensor_adapter.cpp)
   target_link_libraries(test_sensor_adapter PRIVATE hydrox)
   add_test(NAME test_sensor_adapter COMMAND test_sensor_adapter)
+
+  add_executable(test_geodesy tests/test_geodesy.cpp)
+  target_link_libraries(test_geodesy PRIVATE hydrox)
+  add_test(NAME test_geodesy COMMAND test_geodesy)
 
   add_executable(test_mavlink_signing tests/test_mavlink_signing.cpp)
   target_link_libraries(test_mavlink_signing PRIVATE hydrox)
@@ -238,4 +352,27 @@ if(HYDROX_BUILD_TESTS)
   add_executable(test_xlog_writer tests/test_xlog_writer.cpp)
   target_link_libraries(test_xlog_writer PRIVATE hydrox)
   add_test(NAME test_xlog_writer COMMAND test_xlog_writer)
+
+  add_executable(test_residual_rl tests/test_residual_rl.cpp)
+  target_link_libraries(test_residual_rl PRIVATE hydrox)
+  add_test(NAME test_residual_rl COMMAND test_residual_rl)
+
+  add_executable(test_control_shadow tests/test_control_shadow.cpp)
+  target_link_libraries(test_control_shadow PRIVATE hydrox)
+  add_test(NAME test_control_shadow COMMAND test_control_shadow)
+
+  add_executable(test_platform_host tests/test_platform_host.cpp)
+  target_link_libraries(test_platform_host PRIVATE
+    hydrox_platform_host
+    Threads::Threads
+  )
+  add_test(NAME test_platform_host COMMAND test_platform_host)
+
+  add_executable(test_runtime_bus tests/test_runtime_bus.cpp)
+  target_link_libraries(test_runtime_bus PRIVATE hydrox_runtime_api)
+  add_test(NAME test_runtime_bus COMMAND test_runtime_bus)
+
+  add_executable(test_periodic_scheduler tests/test_periodic_scheduler.cpp)
+  target_link_libraries(test_periodic_scheduler PRIVATE hydrox_runtime_api)
+  add_test(NAME test_periodic_scheduler COMMAND test_periodic_scheduler)
 endif()

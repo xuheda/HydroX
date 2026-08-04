@@ -1,4 +1,5 @@
 #include "dds_setpoint_codec.h"
+#include "frame_contract.h"
 
 #include <ucdr/microcdr.h>
 
@@ -157,7 +158,8 @@ namespace hydrox::dds_cdr
             return reject(error, "invalid or truncated header");
         }
         (void)sec;
-        (void)frame_id;
+        if (!frame_contract::is_map_ned(frame_id))
+            return reject(error, "GNCSetpoint header.frame_id must be map_ned");
 
         if (nanosec >= 1'000'000'000U)
             return reject(error, "header nanosec is out of range");

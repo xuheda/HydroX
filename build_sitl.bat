@@ -8,7 +8,7 @@ setlocal
 
 set "SCRIPT_DIR=%~dp0"
 if "%SCRIPT_DIR:~-1%"=="\" set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
-set "BUILD_DIR=%SCRIPT_DIR%\build_sitl"
+set "BUILD_DIR=%SCRIPT_DIR%\build\sitl"
 set "BUILD_TARGET=hydrox_sitl"
 if not "%~1"=="" set "BUILD_TARGET=%~1"
 

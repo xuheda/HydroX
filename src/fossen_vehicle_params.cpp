@@ -290,11 +290,15 @@ namespace
         auto &p = params.surface_gnc;
         if (auto v = number_for_key(*tuning, "surge_kp")) p.surge_kp = *v;
         if (auto v = number_for_key(*tuning, "surge_kd")) p.surge_kd = *v;
+        if (auto v = number_for_key(*tuning, "surge_ki")) p.surge_ki = *v;
+        if (auto v = number_for_key(*tuning, "surge_integral_limit")) p.surge_integral_limit = *v;
         if (auto v = number_for_key(*tuning, "yaw_kp")) p.yaw_kp = *v;
         if (auto v = number_for_key(*tuning, "yaw_kd")) p.yaw_kd = *v;
         if (auto v = number_for_key(*tuning, "max_force_N")) p.max_force_N = *v;
         if (auto v = number_for_key(*tuning, "max_moment_Nm")) p.max_moment_Nm = *v;
         if (auto v = number_for_key(*tuning, "waypoint_surge_mps")) p.waypoint_surge_mps = *v;
+        if (auto v = number_for_key(*tuning, "sideslip_compensation_gain")) p.sideslip_compensation_gain = *v;
+        if (auto v = number_for_key(*tuning, "max_crab_angle_rad")) p.max_crab_angle_rad = *v;
         params.archetype_control_loaded_from_json = true;
     }
 
@@ -331,9 +335,24 @@ namespace
         if (auto v = number_for_key(*tuning, "cruise_speed_mps")) p.cruise_speed_mps = *v;
         if (auto v = number_for_key(*tuning, "altitude_kp")) p.altitude_kp = *v;
         if (auto v = number_for_key(*tuning, "altitude_kd")) p.altitude_kd = *v;
+        if (auto v = number_for_key(*tuning, "altitude_ki")) p.altitude_ki = *v;
+        if (auto v = number_for_key(*tuning, "altitude_integral_limit")) p.altitude_integral_limit = *v;
         if (auto v = number_for_key(*tuning, "pitch_limit_rad")) p.pitch_limit_rad = *v;
         if (auto v = number_for_key(*tuning, "course_kp")) p.course_kp = *v;
         if (auto v = number_for_key(*tuning, "roll_limit_rad")) p.roll_limit_rad = *v;
+        if (auto v = number_for_key(*tuning, "roll_attitude_kp")) p.roll_attitude_kp = *v;
+        if (auto v = number_for_key(*tuning, "roll_rate_kd")) p.roll_rate_kd = *v;
+        if (auto v = number_for_key(*tuning, "max_roll_command")) p.max_roll_command = *v;
+        if (auto v = number_for_key(*tuning, "pitch_attitude_kp")) p.pitch_attitude_kp = *v;
+        if (auto v = number_for_key(*tuning, "pitch_rate_kd")) p.pitch_rate_kd = *v;
+        if (auto v = number_for_key(*tuning, "pitch_trim")) p.pitch_trim = *v;
+        if (auto v = number_for_key(*tuning, "max_pitch_command")) p.max_pitch_command = *v;
+        auto &allocator = params.fixedwing_allocator;
+        if (auto v = number_for_key(*tuning, "elevator_kp")) allocator.elevator_kp = *v;
+        if (auto v = number_for_key(*tuning, "aileron_kp")) allocator.aileron_kp = *v;
+        if (auto v = number_for_key(*tuning, "rudder_kp")) allocator.rudder_kp = *v;
+        if (auto v = number_for_key(*tuning, "throttle_trim")) allocator.throttle_trim = *v;
+        if (auto v = number_for_key(*tuning, "throttle_kp")) allocator.throttle_kp = *v;
         params.archetype_control_loaded_from_json = true;
     }
 
@@ -419,30 +438,11 @@ namespace
         VehicleArchetype archetype)
     {
         std::vector<std::filesystem::path> paths;
-        const char *content_dir =
-            (archetype == VehicleArchetype::Multirotor ||
-             archetype == VehicleArchetype::FixedWing ||
-             archetype == VehicleArchetype::VTOL)
-                ? "Aero"
-                : "Fossen";
+        (void)archetype;
         if (!explicit_path.empty())
             paths.emplace_back(explicit_path);
         if (!params_dir.empty())
-        {
             paths.emplace_back(std::filesystem::path(params_dir) / filename);
-            paths.emplace_back(std::filesystem::path(params_dir).parent_path() / content_dir / filename);
-        }
-        if (const char *env_dir = std::getenv("OCEANX_FOSSEN_PARAMS_DIR"))
-            paths.emplace_back(std::filesystem::path(env_dir) / filename);
-        if (const char *root = std::getenv("OCEANX_ROOT"))
-            paths.emplace_back(std::filesystem::path(root) / "engine" / "Content" / content_dir / filename);
-        const auto cwd = std::filesystem::current_path();
-        paths.emplace_back(cwd / "engine" / "Content" / content_dir / filename);
-        paths.emplace_back(cwd.parent_path() / "engine" / "Content" / content_dir / filename);
-        paths.emplace_back(cwd.parent_path().parent_path() / "engine" / "Content" / content_dir / filename);
-#ifdef _WIN32
-        paths.emplace_back(std::filesystem::path("C:/OceanX/engine/Content") / content_dir / filename);
-#endif
         return paths;
     }
 
@@ -624,7 +624,9 @@ std::string canonical_vehicle_type(const std::string &type)
 {
     const std::string key = compact_key(type);
     if (key.empty() || key == "ecaa9") return "EcaA9";
+    if (key == "ecaa9test") return "EcaA9Test";
     if (key == "lauv") return "LAUV";
+    if (key == "lauvtest") return "LAUVTest";
     if (key == "desisteksaga") return "DesistekSaga";
     if (key == "rexrov2") return "RexROV2";
     if (key == "wamv" || key == "vrxwamv")
@@ -655,6 +657,8 @@ std::string fossen_params_filename(const std::string &type)
     const std::string t = canonical_vehicle_type(type);
     if (t == "EcaA9") return "eca_a9_params.json";
     if (t == "LAUV") return "lauv_params.json";
+    if (t == "EcaA9Test") return "eca_a9_test_params.json";
+    if (t == "LAUVTest") return "lauv_test_params.json";
     if (t == "DesistekSaga") return "desistek_saga_params.json";
     if (t == "RexROV2") return "rexrov2_params.json";
     if (t == "SurfaceVessel") return "otter_params.json";
@@ -723,26 +727,26 @@ FossenControlParams builtin_fossen_control_params(const std::string &type)
     {
         if (out.vehicle_type == "DesistekSaga")
         {
-            out.max_thrust_per_thruster_N = 30.0;
+            out.max_thrust_per_thruster_N = 20.0;
             out.mass_total = 10.0;
         }
         else if (out.vehicle_type == "RexROV2")
         {
-            out.max_thrust_per_thruster_N = 2500.0;
+            out.max_thrust_per_thruster_N = 1540.0;
             out.mass_total = 1862.87;
         }
         validate(out, nullptr);
         return out;
     }
 
-    if (out.vehicle_type == "EcaA9")
+    if (out.vehicle_type == "EcaA9" || out.vehicle_type == "EcaA9Test")
     {
         out.allocator.S_fin = 0.04155; out.allocator.CL_s = 3.0; out.allocator.CL_r = 3.0;
         out.allocator.x_fin = 0.708; out.allocator.D_prop = 0.17; out.allocator.n_max_rpm = 1000.0;
         out.allocator.max_thrust_N = 200.0; out.allocator.delta_max_deg = 15.0;
         out.motor.D_prop = 0.17; out.motor.rpm_max = 1000.0;
     }
-    else if (out.vehicle_type == "LAUV")
+    else if (out.vehicle_type == "LAUV" || out.vehicle_type == "LAUVTest")
     {
         out.allocator.S_fin = 0.0064; out.allocator.CL_s = 3.0; out.allocator.CL_r = 3.0;
         out.allocator.x_fin = 0.40; out.allocator.D_prop = 0.14; out.allocator.n_max_rpm = 9500.0;
@@ -794,33 +798,6 @@ FossenControlParams load_fossen_control_params(
                          ? "Fossen params JSON not found for " + params.vehicle_type
                          : last_error);
     return params;
-}
-
-void apply_inertia_normalized_gains(SlenderBodyAUVController::Params &gnc,
-                                    const FossenControlParams &vp)
-{
-    if (vp.M44_pitch <= 0.0 || vp.mass_total <= 0.0)
-        return;
-
-    constexpr double kRefM44 = 25.68;
-    constexpr double kRefMass = 71.5;
-    const double rTorque = vp.M44_pitch / kRefM44;
-    const double rForce = vp.mass_total / kRefMass;
-
-    gnc.pitch.kp *= rTorque;
-    gnc.pitch.kd *= rTorque;
-    gnc.pitch.tau_max *= rTorque;
-    if (!vp.yaw_rate_control_loaded_from_json)
-    {
-        gnc.yaw_rate.kp *= rTorque;
-        gnc.yaw_rate.ki *= rTorque;
-        gnc.yaw_rate.kd *= rTorque;
-        gnc.yaw_rate.tau_max *= rTorque;
-    }
-
-    gnc.surge.kp *= rForce;
-    gnc.surge.ki *= rForce;
-    gnc.surge.kd *= rForce;
 }
 
 } // namespace hydrox

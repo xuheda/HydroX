@@ -26,7 +26,7 @@ namespace hydrox
 
     ThrusterVehicleController::ThrusterVehicleController(const Params &p) : _p(p) {}
 
-    Wrench ThrusterVehicleController::update(const AUVState &state, double /*dt*/)
+    Wrench ThrusterVehicleController::update(const NavigationState &state, double /*dt*/)
     {
         Wrench tau;
         tau.setZero();

@@ -4,6 +4,7 @@
 #include "gnc/fixedwing_controller.h"
 #include "gnc/vtol_allocator.h"
 #include "gnc/vtol_controller.h"
+#include "vehicle_bundle.h"
 #include "gnc/gnc_controller.h"
 #include "gnc/multirotor_allocator.h"
 #include "gnc/multirotor_controller.h"
@@ -98,6 +99,7 @@ ControlStack build_control_stack(const FossenControlParams &vp)
             tp = rexrov2_thrusters(vp.max_thrust_per_thruster_N);
         else
             tp = vectored_rov_thrusters(vp.max_thrust_per_thruster_N);
+
         stack.allocator = std::make_unique<ThrusterMatrixAllocator>(tp);
         return stack;
     }
@@ -143,7 +145,7 @@ ControlStack build_control_stack(const FossenControlParams &vp)
     if (vp.archetype == VehicleArchetype::FixedWing)
     {
         stack.controller = std::make_unique<FixedWingController>(vp.fixedwing_gnc);
-        stack.allocator = std::make_unique<FixedWingAllocator>();
+        stack.allocator = std::make_unique<FixedWingAllocator>(vp.fixedwing_allocator);
         return stack;
     }
 
@@ -164,6 +166,24 @@ ControlStack build_control_stack(const FossenControlParams &vp)
     apply_inertia_normalized_gains(gnc_params, vp);
     stack.controller = std::make_unique<SlenderBodyAUVController>(gnc_params);
     stack.allocator = std::make_unique<FinAllocator>(vp.allocator);
+    return stack;
+}
+
+ControlStack build_control_stack(const VehicleBundle &bundle)
+{
+    if (bundle.control.archetype != VehicleArchetype::Thruster ||
+        bundle.thrusters.empty())
+        return build_control_stack(bundle.control);
+
+    ControlStack stack;
+    ThrusterVehicleController::Params controller_params = bundle.control.thruster_gnc;
+    if (bundle.control.mass_total > 1e-6)
+        controller_params.mass = bundle.control.mass_total;
+    stack.controller = std::make_unique<ThrusterVehicleController>(controller_params);
+
+    ThrusterMatrixAllocator::Params allocator_params;
+    allocator_params.thrusters = bundle.thrusters;
+    stack.allocator = std::make_unique<ThrusterMatrixAllocator>(allocator_params);
     return stack;
 }
 

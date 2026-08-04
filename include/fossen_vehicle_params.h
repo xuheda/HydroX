@@ -1,12 +1,13 @@
 #pragma once
 /**
- * fossen_vehicle_params.h — load HydroX control parameters from UE5 Fossen JSON.
+ * fossen_vehicle_params.h — legacy control-parameter compatibility loader.
  *
- * The JSON files live under engine/Content/Fossen and are the shared vehicle
- * parameter source for UE5 dynamics and hydrox_sitl control allocation.
+ * New integrations should use vehicle_bundle.h. This API remains for callers
+ * that explicitly supply an existing parameter file or parameter directory.
  */
 
 #include "gnc/control_allocator.h"
+#include "gnc/fixedwing_allocator.h"
 #include "gnc/fixedwing_controller.h"
 #include "gnc/motor_model.h"
 #include "gnc/gnc_controller.h"
@@ -21,8 +22,7 @@
 namespace hydrox
 {
 
-    // Control archetype — selects the IController/IAllocator pair (see
-    // doc/hydrox_control_architecture.md). SlenderBodyFin = torpedo (fins+prop);
+    // Control archetype — selects the IController/IAllocator pair. SlenderBodyFin = torpedo (fins+prop);
     // Thruster = ROV/hovering AUV (thruster array); Surface = USV.
     enum class VehicleArchetype
     {
@@ -52,6 +52,7 @@ namespace hydrox
         SurfaceVesselController::Params surface_gnc;
         MultirotorController::Params multirotor_gnc;
         FixedWingController::Params fixedwing_gnc;
+        FixedWingAllocator::Params fixedwing_allocator;
         VtolController::Params vtol_gnc;
         bool yaw_rate_control_loaded_from_json = false;
         bool archetype_control_loaded_from_json = false;

@@ -102,6 +102,10 @@ namespace
                << "\"ekf_accel\":\"" << accel_mode_name(accel_mode) << "\","
                << "\"allow_truth_heading_aid\":"
                << (config.allow_truth_heading_aid ? "true" : "false") << ','
+               << "\"publish_truth_state\":"
+               << (config.publish_truth_state ? "true" : "false") << ','
+               << "\"control_feedback_source\":\""
+               << control_feedback_source_name(config.control_feedback_source) << "\","
                << "\"truth_logging\":\"20 Hz when HIL_TRUTH_STATE is valid\","
                << "\"coordinate_frame\":\"NED\","
                << "\"units\":\"SI\","
@@ -170,7 +174,7 @@ void XLogRecorder::record_tick(const XLogTickData &data)
         return;
     }
 
-    const AUVState &state = *data.state;
+    const NavigationState &state = *data.state;
     const GNCSetpoint &setpoint = *data.setpoint;
     const Wrench &wrench = *data.wrench;
     const ActuatorCmd &actuator = *data.actuator;

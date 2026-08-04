@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HydroX 控制架构 · HydroX 文档</title>
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <header class="site-header"><div class="site-header__inner"><a class="site-title" href="index.html">HydroX 文档</a></div></header>
+  <main><article><h1 id="hydrox-控制架构">HydroX 控制架构</h1>
+<p>更新日期：2026-07-31</p>
+<p><a href="index.html">返回 HydroX 文档首页</a> · <a href="../../doc/index.html">OceanX 集成文档</a></p>
+<h2 id="本页目录">本页目录</h2>
+<ul><li><a href="#定位">定位</a></li><li><a href="#闭环链路">闭环链路</a></li><li><a href="#真值隔离">真值隔离</a></li><li><a href="#运行循环">运行循环</a></li><li><a href="#导航估计">导航估计</a></li><li><a href="#估计传感器来源">估计传感器来源</a></li><li><a href="#控制输入与模式">控制输入与模式</a></li><li><a href="#控制方法">控制方法</a></li><li><a href="#控制分配">控制分配</a></li><li><a href="#ros-2-接口边界">ROS 2 接口边界</a></li><li><a href="#归属总结">归属总结</a></li><li><a href="#扩展规则">扩展规则</a></li><li><a href="#参考">参考</a></li></ul>
+<h2 id="定位">定位</h2>
+<p>HydroX 是 OceanX 的自动驾驶仪运行时。它负责导航估计、制导控制、控制分配、执行器输出、DDS 状态发布和 QGC telemetry。Unreal/UE 负责场景、渲染、查询、碰撞环境和仿真传感器；AUV/ROV/USV 主运动由 Fossen body 积分，空中载具由 Aero body 积分。ROS 2 位于任务、策略和工具层，只通过 HydroX 的 DDS topic 输入 setpoint 或读取状态。</p>
+<p>这篇文档使用功能层级名：</p>
+<table><thead><tr><th>功能层级</th><th>当前实现名</th><th>说明</th></tr></thead><tbody><tr><td>导航估计</td><td><code>EKF</code> + <code>EstimationProfile</code></td><td>统一 18 维 aided EKF 数学核心；UUV、USV、UAV Profile 选择观测、环境速度语义以及 <code>Q/R/P0</code>。</td></tr><tr><td>制导控制</td><td><code>GNC</code> / <code>IController</code></td><td>根据 vehicle archetype 选择不同控制器。</td></tr><tr><td>控制分配</td><td><code>IAllocator</code></td><td>把广义力 <code>tau</code> 映射到归一化执行器通道。</td></tr><tr><td>自动驾驶仪运行时</td><td><code>HydroX runtime</code></td><td>SITL 已使用共享周期调度和命令权限门控；Pixhawk 6C HITL 将注入 NuttX 平台适配并复用这些行为。</td></tr></tbody></table>
+<p>UE 侧不应新增 PID、reward 或任务状态机来绕过 HydroX 控制链路。任务策略可以决定目标、模式和 setpoint，但不直接控制 UE actor。</p>
+<h2 id="闭环链路">闭环链路</h2>
+<p>控制命令链路：</p>
+<pre><code class="language-text">ROS 2 任务 / 策略 / 操作员设定值
+  -&gt; /oceanx/{vehicle}/control/setpoint_sources/{source}
+  -&gt; setpoint_mux（控制权、优先级、超时与失效保护）
+  -&gt; /hydrox/{vehicle}/in/setpoint (GNCSetpoint，唯一 Publisher)
+  -&gt; Micro XRCE-DDS / DDS Agent
+  -&gt; hydrox_sitl
+     -&gt; 导航估计输出 state
+     -&gt; 制导控制生成 tau
+     -&gt; 控制分配生成 normalized actuator channels
+  -&gt; MAVLink HIL_ACTUATOR_CONTROLS (93)
+  -&gt; FOceanXCommBridge command queue
+  -&gt; FOceanXSimulationRuntime fixed-step command drain
+  -&gt; active FOceanXDynamicsBody 重建执行器力和力矩
+  -&gt; FOceanXFossenBody 或 FOceanXAeroBody fixed-step integration
+  -&gt; UE Actor transform follows active body state</code></pre>
+<p>状态反馈链路：</p>
+<pre><code class="language-text">active Fossen/Aero body StateSnapshot / UE sensor snapshot
+  -&gt; UE 传感器层
+  -&gt; UOceanXSensorPhaseComponent
+  -&gt; FVehicleState.NavigationSensors
+  -&gt; FOceanXCommBridge
+  -&gt; MAVLink HIL_SENSOR / HIL_GPS / HIL_DVL
+  -&gt; hydrox_sitl SensorAdapter
+  -&gt; 导航估计
+  -&gt; 制导控制
+  -&gt; DdsPublisher
+  -&gt; /hydrox/{vehicle}/out/*
+  -&gt; ROS 2 任务 / 策略 / 诊断节点</code></pre>
+<p>声学通信、被动声呐和 RF 通信属于 OceanX 传感器读数，不属于 HydroX 导航估计主状态。它们可以供策略层使用，但不应绕过 HydroX 直接改自动驾驶仪状态。</p>
+<h2 id="真值隔离">真值隔离</h2>
+<p>正常控制闭环固定使用 EKF <code>NavigationState</code>。<code>HIL_TRUTH_STATE</code> 即使新鲜有效，也只进入 XLog 和 estimator debug 通道；只有显式开启 <code>--publish-truth-state true</code> 才发布到 DDS 真值 topic，任何一种诊断出口都不会自动替换 GNC 反馈。默认配置为 <code>--control-feedback-source estimated_state</code>、<code>--publish-truth-state false</code>、<code>--allow-truth-heading-aid false</code>。</p>
+<p><code>--control-feedback-source truth_debug</code> 只用于显式的仿真控制器隔离实验；该模式在启动和周期状态日志中标记 <code>TRUTH_DEBUG</code>，其结果不能作为估计器闭环验证。OceanX 侧还必须显式启用 <code>-OceanXSendHilTruthTelemetry=true</code>，并且只允许 <code>full-stack</code> 仿真运行。真值发布、真值航向辅助和真值控制反馈是三个独立开关，任何一个都不会隐式开启另一个。</p>
+<h2 id="运行循环">运行循环</h2>
+<p>HydroX SITL 默认以：</p>
+<pre><code class="language-text">--rate 100</code></pre>
+<p>运行。HydroX 控制核心采用统一的输入时间戳契约；<code>--rate</code> 只声明名义控制频率，用于首个控制周期的初始化 <code>dt</code> 和按控制周期计数的低频遥测。连接建立后，每个严格递增的 <code>HIL_SENSOR.time_usec</code> 恰好推进一次导航估计、制导控制、motor model 和 energy model，后续积分 <code>dt</code> 直接取相邻输入时间戳之差。同一次 TCP 读取中的多个 IMU 样本按时间戳排队处理，不合并为一次控制更新。平台单调时间仅用于 DDS 命令接收时间、命令 freshness/timeout、心跳、断线保护和 socket 等待，不推进控制状态。HydroX 回送的 <code>HIL_ACTUATOR_CONTROLS.time_usec</code> 由 UE 固定步物理线程校验。完整仿真时间与频率契约见 <a href="../../doc/internal/simulator_time_frequency.html">OceanX 仿真时间与频率契约</a>。</p>
+<p>每个自动驾驶仪 tick 的核心顺序是：</p>
+<ol><li>等待 UE TCP HIL 链路出现可读数据，不使用该等待时间推进控制状态。</li><li><code>SensorAdapter</code> 解析并缓存 <code>HIL_SENSOR</code>、<code>HIL_GPS</code>、<code>HIL_DVL</code> 和调试用 truth frame。</li><li>每个严格递增的 IMU timestamp 形成一个独立控制输入；重复或倒退的 timestamp 被拒绝。</li><li>以相邻输入 timestamp 之差计算算法 <code>dt</code>。</li><li><code>ControlSessionGate</code> 在本连接代次首次收到有效传感器后开放新命令入口。</li><li>非阻塞轮询 DDS setpoint，并按 DDS/HIL 会话代次和平台单调接收时间检查有效性。</li><li>导航估计更新内部 <code>NavigationState</code> 和 covariance。</li><li><code>IController</code> 根据当前 state、mode 和 setpoint 生成广义力 <code>tau=[X,Y,Z,K,M,N]</code>。</li><li><code>IAllocator</code> 将 <code>tau</code> 映射为归一化执行器通道。</li><li>通过 MAVLink <code>HIL_ACTUATOR_CONTROLS</code> 发回 UE。</li><li>发布 <code>/hydrox/{vehicle}/out/*</code> 状态、传感器快照、执行器输出、odom 和 tf；没有新输入 timestamp 时不执行控制更新。</li></ol>
+<p>源码入口：<code>HydroX/apps/sitl/main.cpp</code>；共享运行时接口位于 <code>HydroX/include/hydrox/runtime/</code>，平台适配位于 <code>HydroX/platform/</code>。</p>
+<h2 id="导航估计">导航估计</h2>
+<p>当前导航估计核心是统一的 18 维 aided EKF。状态向量使用 NED / FRD / SI：</p>
+<pre><code class="language-text">x = [
+  N, E, D,
+  roll, pitch, yaw,
+  u, v, w,
+  b_ax, b_ay, b_az,
+  b_gx, b_gy, b_gz,
+  m_N, m_E, m_D
+]</code></pre>
+<p><code>m_N,m_E,m_D</code> 是环境介质速度：UUV/USV 中表示水流；UAV 中保留风速语义，但在没有空速或气动相对速度观测时明确禁用并保持 invalid。</p>
+<p>输出状态：</p>
+<pre><code class="language-text">eta = [N, E, D, roll, pitch, yaw]
+nu  = [u, v, w, p, q, r]</code></pre>
+<p>估计器的核心逻辑：</p>
+<table><thead><tr><th>步骤</th><th>作用</th><th>输入</th></tr></thead><tbody><tr><td>Predict</td><td>用陀螺和可用时的加速度推进姿态、速度、位置和 bias</td><td>IMU gyro、IMU accel、<code>dt</code></td></tr><tr><td>Level update</td><td>静/准静条件下用重力方向约束 roll、pitch 和水平 gyro bias，使用 accel covariance 和 NIS gate</td><td>IMU accel</td></tr><tr><td>Bottom DVL update</td><td>融合 bottom-track 的 body-frame 对地速度 <code>u,v,w</code>，使用 DVL covariance 和 NIS gate</td><td>DVL bottom-track</td></tr><tr><td>Water DVL update</td><td>融合 <code>v_ground_body - R_nb^T current_NED</code>，联合 GPS 对地速度估计 NED 流速</td><td>DVL water-track + GPS velocity</td></tr><tr><td>ZVU fallback</td><td>DVL 离线且没有有效 accel mechanization 时，用弱零速伪观测抑制速度漂移</td><td>无 DVL 时</td></tr><tr><td>Depth update</td><td>融合 NED depth <code>D</code>，使用 depth variance 和 NIS gate</td><td>压力深度</td></tr><tr><td>GPS update</td><td>融合水平位置、UAV 高度和可用的 NED 对地速度，使用 GPS covariance 和 NIS gate</td><td>HIL_GPS</td></tr><tr><td>Heading update</td><td>优先磁力计 heading；仅在显式 debug 开关允许时才使用 SITL truth heading fallback；最后可退回 GPS course yaw；heading update 使用 variance 和 NIS gate</td><td>magnetometer / optional truth fallback / GPS</td></tr></tbody></table>
+<p><code>have_accel=false</code> 时，估计器不做完整惯导速度推进，而退化为 kinematic propagation，由 DVL、ZVU、depth 和 GPS 约束状态。这是为了兼容旧 HIL 流里没有真实 specific force 的情况。</p>
+<table><thead><tr><th>平台 Profile</th><th>垂向辅助</th><th>其他观测</th><th>环境速度</th></tr></thead><tbody><tr><td>UUV</td><td>压力深度</td><td>bottom/water DVL、浮出水面有效的 GPS、磁罗盘</td><td>水流，可观时发布 valid</td></tr><tr><td>USV</td><td>水面深度约束</td><td>GPS、可选 DVL、磁罗盘</td><td>表层水流，可观时发布 valid</td></tr><tr><td>UAV</td><td>GPS 高度</td><td>三维 GPS 位置/速度、磁罗盘；拒绝 DVL/压力深度</td><td>风速语义，当前无相对空气观测所以禁用</td></tr></tbody></table>
+<p>当前源码：</p>
+<table><thead><tr><th>模块</th><th>路径</th></tr></thead><tbody><tr><td>平台估计 Profile</td><td><code>HydroX/include/estimation_profile.h</code> / <code>HydroX/src/estimation_profile.cpp</code></td></tr><tr><td>估计器接口</td><td><code>HydroX/include/ekf.h</code></td></tr><tr><td>估计器实现</td><td><code>HydroX/src/ekf.cpp</code></td></tr><tr><td>传感器适配</td><td><code>HydroX/include/sensor_adapter.h</code></td></tr><tr><td>MAVLink HIL 编解码</td><td><code>HydroX/include/mavlink_hil.h</code></td></tr></tbody></table>
+<h2 id="估计传感器来源">估计传感器来源</h2>
+<p>所有进入 HydroX 导航估计闭环的测量，原则上来自 OceanX UE 仿真传感器，再经 MAVLink HIL 进入 HydroX。ROS 2 不发布估计器内部测量，也不把 truth 直接写进自动驾驶仪状态。主线 HIL 实现中，<code>ImuSensor</code>、<code>DepthSensor</code>、<code>DvlSensor</code>、<code>GpsSensor</code> 和 <code>MagnetometerSensor</code> 在传感器 tick 中按各自频率唤醒，并用当前 fixed-step <code>sample_time</code> 从 <code>FVehicleState</code> history 读取本载具状态，更新各自 latest sample buffer；随后本载具 <code>UOceanXSensorPhaseComponent</code> 统一读取这些 latest sample，按传感器分别写入 <code>FVehicleState.NavigationSensors.Imu/Depth/Magnetometer/Dvl/Gps</code>，每个 sample 都保留自己的 <code>TimestampSec</code> 与 <code>bValid</code>。<code>FOceanXCommBridge</code> 在通信线程只读取 snapshot 并编码 MAVLink，不再根据 physics truth 重新合成 IMU、DVL、GPS、压力或磁场。</p>
+<p><code>HIL_SENSOR.time_usec</code> 对应 IMU sample time。深度和磁力计虽然也通过 <code>HIL_SENSOR</code> 传输，但只在存在未发送过的近时刻 sample 时才置 <code>fields_updated</code>，避免低频测量被每个 IMU frame 重复当作新测量。<code>HIL_DVL.time_usec</code> 和 <code>HIL_GPS.time_usec</code> 分别对应 DVL/GPS 自己的 sample time，HydroX <code>SensorAdapter</code> 后续按这些 timestamp 计算 age、timeout 和融合时刻。</p>
+<table><thead><tr><th>估计量</th><th>传感器来源</th><th>MAVLink 输入</th><th>HydroX 处理</th><th>是否进入正常估计</th></tr></thead><tbody><tr><td>角速度 <code>p,q,r</code></td><td><code>ImuSensor</code> gyro，body/sensor FRD</td><td><code>HIL_SENSOR.xgyro/ygyro/zgyro</code></td><td>作为姿态 predict 输入，输出去 bias 后角速度</td><td>是</td></tr><tr><td>比力 <code>f_x,f_y,f_z</code></td><td><code>ImuSensor</code> accel，body/sensor FRD</td><td><code>HIL_SENSOR.xacc/yacc/zacc</code> + <code>fields_updated</code></td><td>字段有效且量级通过 sanity gate 时启用 mechanization 和 level update</td><td>是，可降级</td></tr><tr><td>深度 <code>D</code></td><td><code>DepthSensor</code> 压力/深度</td><td><code>HIL_SENSOR.abs_pressure</code></td><td><code>pressure_to_depth()</code> 转成正向向下 depth</td><td>是</td></tr><tr><td>磁场</td><td><code>MagnetometerSensor</code>，FRD，microtesla</td><td><code>HIL_SENSOR.xmag/ymag/zmag</code> + <code>fields_updated</code></td><td>tilt compensation 后生成 heading aid</td><td>是，heading 优先来源</td></tr><tr><td>body 速度 <code>u,v,w</code>（底跟踪）</td><td><code>DvlSensor</code> bottom-track 解算速度</td><td><code>HIL_DVL</code> 11060，<code>tracking_mode=1</code></td><td>每个新 HIL timestamp 仅融合一次，直接约束 body-frame 对地速度</td><td>是</td></tr><tr><td>body 速度 <code>u,v,w</code>（水体跟踪）</td><td><code>DvlSensor</code> water-track 解算速度</td><td><code>HIL_DVL</code> 11060，<code>tracking_mode=2</code></td><td>以 <code>v_ground_body - R_nb^T current_NED</code> 融合；不将水相对速度误当对地速度</td><td>是，依赖当前流速状态</td></tr><tr><td>水平位置 <code>N,E</code></td><td><code>GpsSensor</code> / surface local position aid</td><td><code>HIL_GPS</code> 113</td><td>按 geodetic origin 在 lat/lon 与本地 N/E 之间转换，只在新 GPS frame 到达时融合</td><td>是，按场景有效性</td></tr><tr><td>高度 <code>D</code></td><td>GPS altitude</td><td><code>HIL_GPS.alt</code></td><td>仅 UAV 类 vehicle 标记 <code>has_altitude=true</code></td><td>UUV/USV 不用</td></tr><tr><td>水平/垂向速度</td><td><code>GpsSensor</code> velocity</td><td><code>HIL_GPS.vn/ve/vd</code></td><td>有效时作为 NED 对地速度测量；与水体 DVL 一起观测流速</td><td>按场景有效性</td></tr><tr><td>heading fallback</td><td>SITL 调试 truth</td><td><code>HIL_TRUTH_STATE</code></td><td>仅当 <code>--allow-truth-heading-aid true</code> 且 magnetometer heading 不可用时，才兜底更新 yaw</td><td>默认不进入正常估计，只能用于 debug/parity</td></tr><tr><td>声学通信状态</td><td>AcousticCommunicationSensor</td><td><code>/oceanx/{vehicle}/out/acoustic_neighbors</code></td><td>策略层读 delayed neighbor info</td><td>不进入 HydroX 导航估计</td></tr><tr><td>被动声呐 bearing</td><td>PassiveSonarSensor</td><td><code>/oceanx/{vehicle}/out/passive_sonar_bearing</code></td><td>策略层读目标 bearing</td><td>不进入 HydroX 导航估计</td></tr><tr><td>RF 通信状态</td><td>RfCommunicationSensor</td><td>typed sensor adapter</td><td>策略/通信层读即时 neighbor info</td><td>不进入 HydroX 导航估计</td></tr><tr><td>truth state</td><td>活动 Fossen/Aero body / UE 真值</td><td>debug topic / xlog / <code>HIL_TRUTH_STATE</code></td><td>日志、评估、估计器 debug</td><td>不应作为常规闭环状态</td></tr></tbody></table>
+<p>磁力计、DVL、压力深度是当前水下 UUV 主线最关键的估计输入。GPS 在水面或近水面定位辅助时有效；深水闭环不应依赖 GPS。声学定位、USBL/LBL 等如果后续加入，应作为具名传感器和 HIL/DDS 边界输入，而不是让 ROS 策略节点直接改内部 <code>NavigationState</code>。</p>
+<p>当前 HydroX <code>SensorAdapter</code> 已经把 IMU、bottom/water DVL、depth、GPS、magnetometer 和 debug truth 统一整理为带 <code>source</code>、<code>frame</code>、<code>timestamp</code>、<code>validity</code>、<code>age</code> 和 covariance/variance 的 measurement 结构，再由 <code>EstimationProfile</code> 做平台语义门控。EKF 的状态包含 body-frame 对地速度与 world-NED 环境介质速度：bottom DVL 直接约束前者，water DVL 约束两者之差，GPS NED 速度提供对地参考，因此在水体跟踪且存在 GPS 速度时可估计真实流速。每个 DVL/GPS timestamp 只允许一次 measurement update，拒绝的异常帧也不会在之后的高频 IMU tick 重试。DVL、depth、GPS 和 debug truth 的 age/timeout 使用输入 measurement timestamp 计算，不使用平台墙钟，因此仿真暂停、慢放或加速不会改变测量时效；真实传感器驱动也遵循同一 timestamp 契约。仅有水体 DVL、没有 GPS 或近时刻底跟踪时，流速与对地速度不可完全观测；滤波器保留估计但让其 covariance 随过程噪声增长，<code>NavigationState.medium_velocity_valid</code> 会据此反映可信度。无 accelerometer mechanization 时，相对介质速度和 GPS 速度更新冻结直接姿态雅可比，避免在不可观条件下用速度歧义旋转载具姿态。GPS 的 lat/lon/alt 会按 <code>--gps-origin-lat-deg</code> / <code>--gps-origin-lon-deg</code> / <code>--gps-origin-alt-m</code> 转回本地 NED；UE 自动拉起 HydroX 时会传递与 <code>OceanXGpsOrigin*</code> 相同的 origin，手动启动时需要显式保持一致。ROS/DDS setpoint freshness 与 timeout 始终使用 sample 到达 HydroX 时记录的平台单调时间，这是所有运行环境共同采用的通信权限规则。固定 <code>R</code> 仍作为非法 covariance 的 fallback。</p>
+<h2 id="控制输入与模式">控制输入与模式</h2>
+<p>HydroX 的权威低层输入是：</p>
+<pre><code class="language-text">/hydrox/{vehicle}/in/setpoint</code></pre>
+<p>类型为 <code>oceanx_interfaces/msg/GNCSetpoint</code>，在 HydroX 内部对应：</p>
+<pre><code class="language-text">depth_ref        目标深度，m，NED down 为正
+heading_ref      目标航向，rad
+surge_ref        目标纵向速度，m/s
+use_yaw_rate_ref 是否启用 yaw-rate 控制
+yaw_rate_ref     目标 yaw rate，rad/s
+wp_n/wp_e/wp_d   3D waypoint，NED
+mode             DISABLED / DEPTH_HOLD / WAYPOINT_3D / DP / SURFACE</code></pre>
+<p>模式语义：</p>
+<table><thead><tr><th>模式</th><th>含义</th><th>控制行为</th></tr></thead><tbody><tr><td><code>DISABLED</code></td><td>安全空闲</td><td>输出零 <code>tau</code>，执行器不 armed。</td></tr><tr><td><code>DEPTH_HOLD</code></td><td>深度、航向、速度保持</td><td>使用 <code>depth_ref</code>、<code>heading_ref</code> 或 <code>yaw_rate_ref</code>、<code>surge_ref</code>。</td></tr><tr><td><code>WAYPOINT_3D</code></td><td>3D 航点</td><td>控制器把 waypoint 转成局部 heading/depth/speed 目标。</td></tr><tr><td><code>DP</code></td><td>动态定位</td><td>仅对 Thruster / ROV 可悬停平台承诺；使用 <code>wp_n/wp_e/wp_d</code> 和 <code>heading_ref</code> 生成位置保持 wrench。鱼雷型 AUV 不承诺 true DP。</td></tr><tr><td><code>SURFACE</code></td><td>水面模式</td><td>深度/俯仰积分清零，保持水面航向和速度。</td></tr></tbody></table>
+<p>兼容入口：</p>
+<pre><code class="language-text">/oceanx/{vehicle}/control/manual_twist</code></pre>
+<p>类型为 <code>geometry_msgs/Twist</code>，由 adapter 转成 <code>GNCSetpoint</code> 并发布到 <code>/oceanx/{vehicle}/control/setpoint_sources/manual</code>。它适合 teleop 或临时测试，由 <code>setpoint_mux</code> 负责和其他控制源仲裁，不再直接发布 <code>/in/setpoint</code>。</p>
+<h2 id="控制方法">控制方法</h2>
+<p>HydroX 不是为每个载具编写一套独立 controller，而是根据 vehicle profile 选择一个控制原型和一个 allocator。载具参数、执行器限制和几何布置来自 VehicleBundle、vehicle profile 及所选 Fossen/Aero 后端参数。</p>
+<table><thead><tr><th>Vehicle archetype</th><th>Controller</th><th>主要方法</th><th>适用对象</th></tr></thead><tbody><tr><td>Slender-body AUV</td><td><code>SlenderBodyAUVController</code></td><td>depth 外环 PID 生成 pitch_ref，pitch PID 生成 <code>M</code>，heading SMC 或 yaw-rate PI 生成 <code>N</code>，surge P 生成 <code>X</code></td><td>EcaA9 / LAUV 这类鱼雷型 AUV</td></tr><tr><td>Thruster / ROV</td><td><code>ThrusterVehicleController</code></td><td><code>DEPTH_HOLD</code> 下跟踪 surge/depth/heading；<code>DP</code> 下把 <code>wp_n/wp_e/wp_d</code> 位置误差旋到 body FRD，生成 surge/sway/heave/yaw wrench</td><td>RexROV2、DesistekSaga、悬停型 AUV</td></tr><tr><td>Surface</td><td><code>SurfaceVesselController</code></td><td>surge PD + yaw heading/yaw-rate 控制，waypoint 时转成平面 heading 和 surge</td><td>USV</td></tr><tr><td>Multirotor</td><td><code>MultirotorController</code></td><td>depth/height、XY waypoint、roll/pitch/yaw 控制，生成 collective thrust 和 moments</td><td>UAV multirotor</td></tr><tr><td>Fixed wing</td><td><code>FixedWingController</code></td><td>altitude/depth 转 pitch_ref，course 转 roll_ref，输出速度/姿态类 demand</td><td>UAV fixed wing</td></tr><tr><td>VTOL</td><td><code>VtolController</code></td><td>低速旋翼高度/姿态控制与前向速度 demand，配合过渡区机翼/前推桨</td><td>StandardVTOL</td></tr></tbody></table>
+<p>鱼雷型 AUV 的深度控制不是直接输出 heave force。它通过 depth 外环给出 pitch_ref，再通过 pitch moment 和前进速度产生升沉效果：</p>
+<pre><code class="language-text">depth error -&gt; DepthPID -&gt; theta_ref
+theta_ref - pitch -&gt; PitchPID -&gt; tau_M
+surge_ref - u -&gt; SurgeP -&gt; tau_X
+heading_ref / yaw_rate_ref -&gt; HeadingSMC or yaw-rate PI -&gt; tau_N
+tau_Z = 0</code></pre>
+<p>这意味着低速时舵效会下降，因为 allocator 依赖动压 <code>q=0.5*rho*u^2</code>。如果 AUV 低速深度跟踪差，应先检查 surge、DVL 速度估计、舵面饱和和 Fossen 参数，而不是简单把 depth PID 调大。</p>
+<p>更详细的底层控制方法见 <a href="control_methods.html">控制方法</a>。</p>
+<h2 id="控制分配">控制分配</h2>
+<p>控制器统一输出 body-frame 广义力：</p>
+<pre><code class="language-text">tau = [X, Y, Z, K, M, N]</code></pre>
+<p>单位为 N 和 N*m。allocator 将 <code>tau</code> 映射为 MAVLink <code>HIL_ACTUATOR_CONTROLS</code> 需要的归一化通道：</p>
+<table><thead><tr><th>Allocator</th><th>映射方式</th></tr></thead><tbody><tr><td><code>FinAllocator</code></td><td><code>X</code> 转 stern prop thrust/rpm，<code>M</code> 转水平舵面，<code>N</code> 转垂直舵面，通道 0..4 为 4 个舵面 + 推力。</td></tr><tr><td><code>ThrusterMatrixAllocator</code></td><td>根据 thruster 位置、方向和 max thrust，把 6-DOF wrench 映射到多推进器通道。</td></tr><tr><td><code>TwinScrewAllocator</code></td><td>把 surge force 和 yaw moment 映射到左右推进器。</td></tr><tr><td><code>QuadrotorAllocator</code></td><td>把 collective thrust 和 moments 映射到四旋翼电机通道。</td></tr><tr><td><code>FixedWingAllocator</code></td><td>把速度、roll、pitch、yaw-rate demand 映射到固定翼控制通道。</td></tr><tr><td><code>VtolAllocator</code></td><td>通道 0..3 为升力旋翼，4..6 为 elevator/aileron/rudder，7 为前推桨。</td></tr></tbody></table>
+<p>输出契约：</p>
+<pre><code class="language-text">normalized channel in [-1, 1]
+  -&gt; MAVLink HIL_ACTUATOR_CONTROLS
+  -&gt; UE vehicle profile
+  -&gt; actuator wrench
+  -&gt; selected Fossen or Aero dynamics and kinematic integration
+  -&gt; UE Actor transform</code></pre>
+<p>通道符号必须在三处保持一致：HydroX allocator、MAVLink bridge、UE vehicle profile。新增载具时优先新增/修改 profile 和 allocator 参数，只有可控自由度或控制结构确实不同，才新增 controller。</p>
+<h2 id="ros-2-接口边界">ROS 2 接口边界</h2>
+<p>Topic、Service、Action、QoS、发布频率、frame、超时和控制源优先级已拆分到独立的 <a href="ros_interfaces.html">OceanX ROS 2 话题与接口契约</a>。该文档是 ROS/DDS 接口的唯一权威说明；本页只保留理解 HydroX 控制闭环所需的接口引用。</p>
+<pre><code class="language-text">/hydrox/{vehicle}/...  # HydroX 自动驾驶仪 ABI
+/oceanx/{vehicle}/...  # OceanX 上层、仿真传感器和 ROS 工具
+/oceanx/fleet/...      # 跨载具任务与编队接口</code></pre>
+<p>需要进入自动驾驶仪闭环的导航测量走 MAVLink HIL → HydroX；ROS 任务和策略通过 <code>setpoint_mux</code> 向 <code>/hydrox/{vehicle}/in/setpoint</code> 提交最终命令。ROS 侧不得直接改 HydroX 内部估计状态，也不得从当前队友真值重新模拟声学传播。</p>
+<h2 id="归属总结">归属总结</h2>
+<ul><li><code>hydrox_sitl</code> 负责导航估计、制导控制、控制分配、MAVLink HIL 和 <code>/out/*</code> telemetry topic。</li><li>UE <code>FOceanXCommBridge</code> 负责把 UE 仿真传感器 sample 编码成 HIL 消息，并消费 HydroX 执行器输出。</li><li><code>oceanx_control</code> 负责 mission 消费和 setpoint 发布。</li><li><code>oceanx_coordination</code> 负责跨载具 mission assignment 和 formation service 入口。</li><li><code>direct_cmd_adapter</code> 是给轻量外部控制器使用的可选兼容节点。</li><li>所有依赖估计状态消息类型 <code>VehicleState</code> 的外部控制节点必须使用本地 monotonic receive time 检查状态新鲜度；<code>setpoint_mux</code> 再做一次独立状态闸门。状态失联会清空缓存，恢复时必须先收到新状态、再收到新命令，禁止重放失联前的 source sample。</li><li>OceanX 声学、RF、被动声呐等策略传感器应由 UE sensor layer 生产 typed reading，ROS 侧只转发，不重新模拟。</li></ul>
+<h2 id="扩展规则">扩展规则</h2>
+<ul><li>新几何或新执行器布置应新增 vehicle profile。</li><li>只有可控自由度或控制结构不同，才新增 controller。</li><li>actuator limit、effectiveness matrix 和所选 Fossen/Aero 后端参数保持在配置中。</li><li>估计器测量必须来自具名传感器和 HIL/DDS 边界，不能让策略节点直接写自动驾驶仪 state。</li><li>truth state 只能用于日志、诊断和对齐测试；UE 侧默认不发送 <code>HIL_TRUTH_STATE</code>，只有显式传入 <code>-OceanXSendHilTruthTelemetry=true</code> 时才发送。<code>-OceanXPublishSitlTruthState=true</code>、<code>-OceanXAllowTruthHeadingAid=true</code> 与 <code>-OceanXControlFeedbackSource=truth_debug</code> 分别控制 DDS 诊断发布、航向辅助和真值调试闭环，三者互相独立并且都要求先开启真值遥测。正式闭环必须保持 <code>estimated_state</code>。</li><li>坐标转换留在 MAVLink、DDS 或 ROS 边界。</li><li>新增或修改 ROS/DDS 接口时，按 <a href="ros_interfaces.html#维护规则">ROS 2 接口维护规则</a> 同步 manifest、interface、QoS、频率、文档和测试。</li><li>controller 输出、allocator 饱和、MAVLink channel 和 UE actuator 符号要一起测试。</li></ul>
+<h2 id="参考">参考</h2>
+<ul><li>T. I. Fossen, <em>Handbook of Marine Craft Hydrodynamics and Motion Control</em>, second edition, 2021.</li><li>T. A. Johansen and T. I. Fossen, "Control Allocation: A Survey," <em>Automatica</em>, 2013.</li></ul>
+<p>这些是成熟的控制与分配参考，不代表项目原创性声明。</p></article></main>
+</body>
+</html>

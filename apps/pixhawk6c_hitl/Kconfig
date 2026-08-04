@@ -1,0 +1,20 @@
+config HYDROX_PIXHAWK6C_HITL
+	bool "HydroX Pixhawk 6C HITL application"
+	default n
+	help
+		Build the HydroX HITL-only application. Simulated sensor data enters
+		through the OceanX MAVLink HIL device and normalized actuator commands return
+		to the simulator. Physical actuator outputs remain disabled.
+
+if HYDROX_PIXHAWK6C_HITL
+
+config HYDROX_HITL_PRIORITY
+	int "HydroX supervisor task priority"
+	default 180
+	range 1 255
+
+config HYDROX_HITL_STACKSIZE
+	int "HydroX supervisor task stack size"
+	default 8192
+
+endif

@@ -23,24 +23,39 @@ namespace hydrox
         UAV_VTOL = 4,
     };
 
-    // AUV 6-DOF State
-    struct AUVState
+    /**
+     * Physical meaning of the optional environmental-velocity states.
+     *
+     * The navigation core carries one generic NED medium-velocity vector.
+     * Measurement profiles decide whether it represents water current, wind,
+     * or is intentionally disabled because the active sensor suite cannot
+     * observe it.
+     */
+    enum class MediumVelocityKind : uint8_t
+    {
+        None = 0,
+        WaterCurrent = 1,
+        Wind = 2,
+    };
+
+    // Vehicle-neutral 6-DOF navigation state used by every control archetype.
+    struct NavigationState
     {
         Eigen::Vector<double, 6> eta; // [N, E, D, roll, pitch, yaw]
         Eigen::Vector<double, 6> nu;  // [u, v, w, p, q, r]
         double depth_m = 0.0;
-        // EKF-estimated water current in the world NED frame.  `nu[0..2]`
-        // remains the body-frame ground velocity so GNC keeps its existing
-        // navigation semantics.
-        Eigen::Vector3d current_ned = Eigen::Vector3d::Zero();
-        Eigen::Vector3d current_std_ned = Eigen::Vector3d::Zero();
-        bool current_valid = false;
+        // EKF-estimated environmental-medium velocity in world NED.
+        // `nu[0..2]` remains body-frame ground velocity.
+        Eigen::Vector3d medium_velocity_ned = Eigen::Vector3d::Zero();
+        Eigen::Vector3d medium_velocity_std_ned = Eigen::Vector3d::Zero();
+        MediumVelocityKind medium_velocity_kind = MediumVelocityKind::None;
+        bool medium_velocity_valid = false;
         bool dvl_valid = false;
         double timestamp = 0.0;
 
-        static AUVState zeros()
+        static NavigationState zeros()
         {
-            AUVState s;
+            NavigationState s;
             s.eta.setZero();
             s.nu.setZero();
             return s;
@@ -50,6 +65,8 @@ namespace hydrox
         double surge() const { return nu[0]; }
     };
 
+    // Source compatibility for downstream code while internal code migrates to
+    // the vehicle-neutral name. New code should use NavigationState.
     // Actuator Command
     struct FinCmd
     {

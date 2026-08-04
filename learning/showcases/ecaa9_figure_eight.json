@@ -1,0 +1,58 @@
+{
+  "name": "EcaA9 3D Figure-Eight Tracking",
+  "description": "Closed-loop baseline GNC tracking of a rounded horizontal figure eight with depth changes.",
+  "scenario": "learning/scenarios/ecaa9_training.json",
+  "vehicle_names": ["ecaa9_train"],
+  "bringup": {
+    "vehicle_names": ["ecaa9_train"],
+    "start_fleet_manager": false,
+    "start_formation": false,
+    "start_pursuit": false,
+    "start_visualization": false,
+    "default_source": "auto",
+    "state_timeout_sec": 6.0,
+    "source_timeout_sec": 4.0
+  },
+  "ready": {
+    "timeout_sec": 90,
+    "per_call_timeout_sec": 8,
+    "strict": true,
+    "require_topic_messages": true,
+    "topics": ["/hydrox/ecaa9_train/out/auv_state"],
+    "actions": ["/oceanx/ecaa9_train/mission/follow_waypoints"]
+  },
+  "acts": [
+    {
+      "at": 0,
+      "type": "wait_ready",
+      "name": "EcaA9 trajectory stack ready"
+    },
+    {
+      "at": 5,
+      "type": "follow_waypoints",
+      "name": "EcaA9 3D figure-eight",
+      "vehicle": "ecaa9_train",
+      "waypoints": [
+        {"x": 40.0, "y": 40.0, "z": 100.0},
+        {"x": 85.0, "y": 0.0, "z": 108.0},
+        {"x": 40.0, "y": -40.0, "z": 112.0},
+        {"x": 0.0, "y": 0.0, "z": 100.0},
+        {"x": -40.0, "y": 40.0, "z": 92.0},
+        {"x": -85.0, "y": 0.0, "z": 88.0},
+        {"x": -40.0, "y": -40.0, "z": 95.0},
+        {"x": 0.0, "y": 0.0, "z": 105.0}
+      ],
+      "speed": 2.0,
+      "radius": 5.0,
+      "loop": false,
+      "wait": false
+    },
+    {
+      "at": 280,
+      "type": "topic_snapshot",
+      "name": "EcaA9 final trajectory state",
+      "topics": ["/hydrox/ecaa9_train/out/auv_state"],
+      "timeout_sec": 6
+    }
+  ]
+}

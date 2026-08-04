@@ -1,0 +1,13 @@
+{
+  "name": "EcaA9 shear-vortex loop collection",
+  "description": "Baseline GNC data: mixed turns in depth-varying shear and a weak vortex.",
+  "scenario": "learning/scenarios/ecaa9_training.json",
+  "vehicle_names": ["ecaa9_train"],
+  "bringup": {"vehicle_names": ["ecaa9_train"], "start_fleet_manager": false, "start_formation": false, "start_pursuit": false, "start_visualization": false, "default_source": "auto", "state_timeout_sec": 6.0, "source_timeout_sec": 4.0},
+  "ready": {"timeout_sec": 90, "per_call_timeout_sec": 8, "strict": true, "require_topic_messages": true, "topics": ["/hydrox/ecaa9_train/out/auv_state"], "actions": ["/oceanx/ecaa9_train/mission/follow_waypoints"]},
+  "acts": [
+    {"at": 0, "type": "wait_ready", "name": "EcaA9 stack ready"},
+    {"at": 5, "type": "follow_waypoints", "name": "shear-vortex loop", "vehicle": "ecaa9_train", "waypoints": [{"x": 32.0, "y": 0.0, "z": 100.0}, {"x": 52.0, "y": 28.0, "z": 106.0}, {"x": 28.0, "y": 52.0, "z": 110.0}, {"x": 0.0, "y": 30.0, "z": 104.0}, {"x": -28.0, "y": 0.0, "z": 96.0}, {"x": 0.0, "y": -30.0, "z": 94.0}, {"x": 28.0, "y": -16.0, "z": 100.0}], "speed": 1.2, "radius": 5.0, "loop": false, "wait": false},
+    {"at": 260, "type": "topic_snapshot", "name": "final state", "topics": ["/hydrox/ecaa9_train/out/auv_state"], "timeout_sec": 6}
+  ]
+}

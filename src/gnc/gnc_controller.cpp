@@ -68,7 +68,7 @@ namespace hydrox
         return _yaw_rate_ref_filtered;
     }
 
-    void SlenderBodyAUVController::reset(const AUVState &state)
+    void SlenderBodyAUVController::reset(const NavigationState &state)
     {
         _depth_pid.reset(state.depth_m);
         _pitch_pid.reset(state.eta[4]);
@@ -79,7 +79,7 @@ namespace hydrox
         _yaw_rate_ref_initialized = false;
     }
 
-    Wrench SlenderBodyAUVController::update(const AUVState &state, double dt)
+    Wrench SlenderBodyAUVController::update(const NavigationState &state, double dt)
     {
         Wrench tau;
         tau.setZero();

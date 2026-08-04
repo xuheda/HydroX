@@ -1,0 +1,15 @@
+{
+  "schema_version": 1.0,
+  "frame": "NED",
+  "enabled": true,
+  "base_velocity_ned_mps": [0.0, 0.25, 0.0],
+  "layer": {
+    "enabled": false,
+    "surface_velocity_ned_mps": [0.0, 0.25, 0.0],
+    "deep_velocity_ned_mps": [0.0, 0.25, 0.0],
+    "transition_depth_m": 100.0,
+    "transition_width_m": 10.0
+  },
+  "tide": {"enabled": false, "amplitude_scale": 0.0, "period_s": 900.0, "phase_deg": 0.0},
+  "vortices": []
+}

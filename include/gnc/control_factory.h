@@ -13,6 +13,8 @@
 
 namespace hydrox
 {
+    struct VehicleBundle;
+
     struct ControlStack
     {
         std::unique_ptr<IController> controller;
@@ -20,5 +22,6 @@ namespace hydrox
     };
 
     ControlStack build_control_stack(const FossenControlParams &vp);
+    ControlStack build_control_stack(const VehicleBundle &bundle);
 
 } // namespace hydrox

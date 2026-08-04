@@ -8,10 +8,13 @@ namespace hydrox
 
     ThrusterMatrixAllocator::ThrusterMatrixAllocator(const Params &p) : _p(p)
     {
-        const int n = static_cast<int>(_p.thrusters.size());
+        const int n = std::min<int>(
+            static_cast<int>(_p.thrusters.size()), MaxThrusters);
+        _thruster_count = n;
         // Configuration matrix B (6 x n): each column maps a unit thruster force
         // to a body wrench  [force ; moment] = [dir ; pos x dir].
-        Eigen::Matrix<double, 6, Eigen::Dynamic> B(6, n);
+        Eigen::Matrix<double, 6, MaxThrusters> B =
+            Eigen::Matrix<double, 6, MaxThrusters>::Zero();
         for (int i = 0; i < n; ++i)
         {
             const Eigen::Vector3d d = _p.thrusters[i].dir.normalized();
@@ -21,14 +24,29 @@ namespace hydrox
         }
         // Damped least squares: u = B^T (B B^T + lambda I)^-1 tau.
         Eigen::Matrix<double, 6, 6> BBt =
-            B * B.transpose() + _p.lambda * Eigen::Matrix<double, 6, 6>::Identity();
-        _Bpinv = B.transpose() * BBt.inverse(); // n x 6
+            B.leftCols(n) * B.leftCols(n).transpose() +
+            _p.lambda * Eigen::Matrix<double, 6, 6>::Identity();
+        _Bpinv.topRows(n) =
+            B.leftCols(n).transpose() * BBt.inverse();
     }
 
     ActuatorCmd ThrusterMatrixAllocator::allocate(const Wrench &tau, double /*surge*/) const
     {
-        const int n = static_cast<int>(_p.thrusters.size());
-        const Eigen::Matrix<double, Eigen::Dynamic, 1> u = _Bpinv * tau; // per-thruster force (N)
+        if (_p.direct_wrench_output)
+        {
+            const double force_limit = std::max(_p.direct_force_limit_N, 1.0e-6);
+            const double moment_limit = std::max(_p.direct_moment_limit_Nm, 1.0e-6);
+            ActuatorCmd cmd;
+            for (int i = 0; i < 3; ++i)
+                cmd.ch[i] = static_cast<float>(std::max(-1.0, std::min(1.0, tau[i] / force_limit)));
+            for (int i = 3; i < 6; ++i)
+                cmd.ch[i] = static_cast<float>(std::max(-1.0, std::min(1.0, tau[i] / moment_limit)));
+            return cmd;
+        }
+
+        const int n = _thruster_count;
+        const Eigen::Matrix<double, MaxThrusters, 1> u =
+            _Bpinv * tau;
 
         ActuatorCmd cmd;
         const int nc = std::min<int>(n, static_cast<int>(cmd.ch.size()));

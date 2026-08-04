@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OceanX ROS 2 话题与接口契约 · HydroX 文档</title>
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <header class="site-header"><div class="site-header__inner"><a class="site-title" href="index.html">HydroX 文档</a></div></header>
+  <main><article>
+    <h1 id="oceanx-ros-2-话题与接口契约">OceanX ROS 2 话题与接口契约</h1>
+    <p>更新日期：2026-07-31</p>
+    <p><a href="index.html">返回 HydroX 文档首页</a> · <a href="../../doc/index.html">OceanX 文档首页</a> · <a href="../../ros/README.md">ROS 2 工作区说明</a></p>
+
+    <h2 id="定位">定位</h2>
+    <p>本文是 OceanX 与 HydroX 当前 ROS 2 Topic、Service、Action、QoS、发布频率、坐标系和新鲜度规则的唯一权威说明。HydroX 控制器、估计器和分配器本身见 <a href="control_architecture.html">HydroX 控制架构</a>；ROS package 的构建与启动见 <a href="../../ros/README.md">ROS 2 工作区说明</a>。</p>
+    <p>接口定义分为三层，修改时必须同步：</p>
+    <ol>
+      <li><code>ros/src/oceanx_interfaces/{msg,srv,action}/</code> 定义字段和 ROS 类型。</li>
+      <li><a href="../include/dds_topic_manifest.h"><code>HydroX/include/dds_topic_manifest.h</code></a> 定义 bare XRCE-DDS 话题的名称、方向、类型、ID 和发布频率。</li>
+      <li>本文定义端到端语义、Owner、消费者、QoS、frame、超时与安全边界。</li>
+    </ol>
+
+    <h2 id="快速理解">快速理解</h2>
+    <pre><code class="language-text">ROS 任务 / 策略 / 操作员
+  -&gt; /oceanx/{vehicle}/control/setpoint_sources/{source}
+  -&gt; setpoint_mux
+  -&gt; /hydrox/{vehicle}/in/setpoint
+  -&gt; HydroX GNC / allocator
+  -&gt; MAVLink HIL_ACTUATOR_CONTROLS
+  -&gt; UE / OceanX dynamics
+
+UE 传感器 / Fossen 或 Aero 状态
+  -&gt; MAVLink HIL
+  -&gt; HydroX estimator
+  -&gt; /hydrox/{vehicle}/out/*
+  -&gt; ROS 控制、协调、诊断与可视化</code></pre>
+    <p><code>{vehicle}</code> 是场景和启动配置中的稳定载具名，例如 <code>ecaa9_test</code>。同一载具的所有节点必须使用完全相同的名称和 <code>ROS_DOMAIN_ID</code>。</p>
+    <p><code>VehicleState</code> 是平台中性的六自由度状态消息；<code>/out/state_estimate</code> 发布导航估计，<code>/out/truth_state</code> 仅发布显式开启的仿真真值。文档中的普通对象称谓统一使用“载具”。</p>
+
+    <h2 id="命名空间">命名空间</h2>
+    <table>
+      <thead><tr><th>路径</th><th>Owner 与用途</th></tr></thead>
+      <tbody>
+        <tr><td><code>/hydrox/{vehicle}/in/*</code></td><td>进入 HydroX 自动驾驶仪低层控制链路的命令。</td></tr>
+        <tr><td><code>/hydrox/{vehicle}/out/*</code></td><td>HydroX 导航估计、状态、执行器和诊断输出。</td></tr>
+        <tr><td><code>/oceanx/{vehicle}/out/*</code></td><td>OceanX 仿真特有的 typed 传感器观测，经 UE → HIL → HydroX DDS 发布。</td></tr>
+        <tr><td><code>/oceanx/{vehicle}/control/*</code></td><td>ROS 上层控制源、控制权选择和仲裁状态。</td></tr>
+        <tr><td><code>/oceanx/{vehicle}/mission/*</code></td><td>静态、可取消的高层任务生命周期。</td></tr>
+        <tr><td><code>/oceanx/{vehicle}/guidance/*</code></td><td>需要持续续租的动态制导目标。</td></tr>
+        <tr><td><code>/oceanx/{vehicle}/formation/*</code></td><td>每载具的编队目标。</td></tr>
+        <tr><td><code>/oceanx/{vehicle}/visualization/*</code></td><td>由 ROS 工具生成的派生可视化数据。</td></tr>
+        <tr><td><code>/oceanx/fleet/*</code></td><td>跨载具任务分配、编队管理和多载具集群状态；<code>fleet</code> 为兼容命名。</td></tr>
+        <tr><td><code>/tf</code></td><td>全局 TF 流；HydroX 发布 <code>map_ned → {vehicle}/base_link_frd</code>。</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="hydrox-dds-话题">HydroX 与 OceanX bare-DDS 话题</h2>
+    <p>下表频率来自 <code>dds_topic_manifest.h</code>。除 setpoint 外，DDS 状态和传感器流均为 <code>BEST_EFFORT + KEEP_LAST + VOLATILE</code>；ROS 订阅端必须显式请求 <code>BEST_EFFORT</code>。</p>
+    <table>
+      <thead><tr><th>Topic</th><th>类型</th><th>发布者 → 主要消费者</th><th>默认频率</th><th>frame / 备注</th></tr></thead>
+      <tbody>
+        <tr><td><code>/hydrox/{vehicle}/out/state_estimate</code></td><td><code>oceanx_interfaces/msg/VehicleState</code></td><td><code>hydrox_sitl</code> → mux、航点、编队、多载具协调、追踪、手动/诊断节点</td><td>20 Hz</td><td><code>map_ned</code>；估计状态，是上层控制的主要反馈。</td></tr>
+        <tr><td><code>/hydrox/{vehicle}/out/truth_state</code></td><td><code>oceanx_interfaces/msg/VehicleState</code></td><td><code>hydrox_sitl</code> → 诊断/对齐工具</td><td>5 Hz</td><td><code>map_ned</code>；仅显式开启 debug truth 时存在，不得进入正常控制闭环。</td></tr>
+        <tr><td><code>/hydrox/{vehicle}/out/vehicle_status</code></td><td><code>oceanx_interfaces/msg/VehicleStatus</code></td><td><code>hydrox_sitl</code> → visualization、诊断</td><td>1 Hz</td><td>GNC mode、arming、HIL 和 EKF 健康状态。</td></tr>
+        <tr><td><code>/hydrox/{vehicle}/out/vehicle_local_position</code></td><td><code>oceanx_interfaces/msg/VehicleLocalPosition</code></td><td><code>hydrox_sitl</code> → deployment XLog logger、诊断</td><td>5 Hz</td><td><code>map_ned</code>；位置/姿态为 NED，线速度和角速度为 body FRD。</td></tr>
+        <tr><td><code>/hydrox/{vehicle}/out/sensor_combined</code></td><td><code>oceanx_interfaces/msg/SensorCombined</code></td><td><code>hydrox_sitl</code> → 外部诊断</td><td>5 Hz</td><td><code>{vehicle}/base_link_frd</code>；导航输入的聚合快照，不是原始逐传感器全带宽流。</td></tr>
+        <tr><td><code>/hydrox/{vehicle}/out/actuator_outputs</code></td><td><code>oceanx_interfaces/msg/ActuatorOutputs</code></td><td><code>hydrox_sitl</code> → visualization、诊断</td><td>5 Hz</td><td><code>{vehicle}/base_link_frd</code>；归一化通道和物理遥测值。</td></tr>
+        <tr><td><code>/hydrox/{vehicle}/out/odom</code></td><td><code>nav_msgs/msg/Odometry</code></td><td><code>hydrox_sitl</code> → visualization / RViz</td><td>5 Hz</td><td>parent <code>map_ned</code>，child <code>{vehicle}/base_link_frd</code>。</td></tr>
+        <tr><td><code>/tf</code></td><td><code>tf2_msgs/msg/TFMessage</code></td><td><code>hydrox_sitl</code> → tf2 / RViz</td><td>5 Hz</td><td>真实 NED/FRD 变换，不是只改标签的 ENU/FLU 数据。</td></tr>
+        <tr><td><code>/oceanx/{vehicle}/out/passive_sonar_bearing</code></td><td><code>oceanx_interfaces/msg/PassiveSonarBearing</code></td><td>UE sensor → HIL → HydroX DDS → 策略/诊断</td><td>10 Hz</td><td>receiver-local FRD；方位角向右为正、俯仰角向下为正。</td></tr>
+        <tr><td><code>/oceanx/{vehicle}/out/acoustic_neighbors</code></td><td><code>oceanx_interfaces/msg/AcousticNeighbors</code></td><td>UE sensor → HIL → HydroX DDS → 协同策略/诊断</td><td>10 Hz</td><td>header 为 receiver body FRD；contact 位置/线速度为发送时刻的 NED 信息。</td></tr>
+        <tr><td><code>/oceanx/{vehicle}/out/rangefinder_scan</code></td><td><code>oceanx_interfaces/msg/RangeFinderScan</code></td><td>UE sensor → HIL → HydroX DDS → 避障/诊断</td><td>10 Hz</td><td>receiver-local FRD；ray 0 向前，无命中归一化为 1.0。</td></tr>
+        <tr><td><code>/hydrox/{vehicle}/in/setpoint</code></td><td><code>oceanx_interfaces/msg/GNCSetpoint</code></td><td><code>setpoint_mux</code>（唯一 ROS Publisher）→ HydroX DDS reader；logger/visualization 可旁路订阅</td><td>mux 默认 20 Hz；DDS reader 为事件驱动</td><td>Publisher 使用 <code>RELIABLE</code>；HydroX reader 可请求 <code>BEST_EFFORT</code>，并独立做 2.0 s 默认命令超时。</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="ros-控制与任务接口">ROS 控制、任务与协调接口</h2>
+    <table>
+      <thead><tr><th>接口</th><th>类型</th><th>发布者/服务端 → 消费者/客户端</th><th>QoS / 触发</th><th>安全语义</th></tr></thead>
+      <tbody>
+        <tr><td><code>/oceanx/{vehicle}/control/setpoint_sources/{source}</code></td><td><code>GNCSetpoint</code></td><td>manual、diagnostic、formation、waypoint → <code>setpoint_mux</code></td><td><code>RELIABLE</code>，depth 10；生产者自定频率，内置控制器通常 10 Hz</td><td>默认 0.5 s source lease；<code>DISABLED</code> 表示立即释放该 source。</td></tr>
+        <tr><td><code>/oceanx/{vehicle}/control/manual_twist</code></td><td><code>geometry_msgs/msg/Twist</code></td><td>teleop / 测试 / 外部 autonomy → <code>direct_cmd_adapter</code></td><td>ROS 默认 reliable；事件驱动</td><td>adapter 只有在估计状态消息 <code>VehicleState</code> 新鲜时才转换为 manual source。</td></tr>
+        <tr><td><code>/oceanx/{vehicle}/control/select_source</code></td><td><code>oceanx_interfaces/srv/SetControlSource</code></td><td>operator / client → <code>setpoint_mux</code></td><td>Service，reliable</td><td>合法值为 <code>disabled</code>、<code>auto</code>、<code>manual</code>、<code>diagnostic</code>、<code>formation</code>、<code>waypoint</code>。</td></tr>
+        <tr><td><code>/oceanx/{vehicle}/control/source_status</code></td><td><code>oceanx_interfaces/msg/ControlSourceStatus</code></td><td><code>setpoint_mux</code> → operator / monitor</td><td><code>RELIABLE + TRANSIENT_LOCAL</code>，depth 1；默认 20 Hz</td><td>报告请求源、实际源、命令/状态 age、fresh sources 和 failsafe 原因。</td></tr>
+        <tr><td><code>/oceanx/{vehicle}/mission/follow_waypoints</code></td><td><code>oceanx_interfaces/action/FollowWaypoints</code></td><td><code>waypoint_planner</code> Action server ← operator / fleet manager</td><td>Action；按 Goal 触发，控制循环默认 10 Hz</td><td>支持 feedback、cancel 和 preempt；结束时明确释放 waypoint source。</td></tr>
+        <tr><td><code>/oceanx/{vehicle}/guidance/pursuit</code></td><td><code>oceanx_interfaces/msg/GuidanceTarget</code></td><td><code>pursuit_coordinator</code> → <code>waypoint_planner</code></td><td><code>RELIABLE</code>，depth 10；默认 2 Hz</td><td>默认 lease 1.0 s，最大接受 lease 2.0 s；<code>session_id</code> 隔离前后会话。</td></tr>
+        <tr><td><code>/oceanx/{vehicle}/formation/goal</code></td><td><code>oceanx_interfaces/msg/FormationGoal</code></td><td><code>formation_ctrl</code> → <code>formation_follower</code></td><td><code>RELIABLE</code>，depth 10；默认 5 Hz</td><td>follower 默认 goal timeout 0.75 s、state timeout 0.5 s；inactive goal 立即释放 formation source。</td></tr>
+        <tr><td><code>/oceanx/fleet/assign_mission</code></td><td><code>oceanx_interfaces/action/AssignFleetMission</code></td><td><code>fleet_manager</code> Action server ← operator / behavior</td><td>Action；按 Goal 触发</td><td>分配到指定或最近的新鲜空闲载具，并把 cancel/终态传递到 FollowWaypoints。</td></tr>
+        <tr><td><code>/oceanx/fleet/manage_formation</code></td><td><code>oceanx_interfaces/srv/ManageFormation</code></td><td><code>formation_ctrl</code> Service server ← operator / behavior</td><td>Service，reliable</td><td><code>START/PAUSE/RESUME/STOP</code>；START 先完整校验和创建新实体，成功后才替换旧编队。</td></tr>
+        <tr><td><code>/oceanx/fleet/formation_status</code></td><td><code>oceanx_interfaces/msg/FormationStatus</code></td><td><code>formation_ctrl</code> → operator / monitor</td><td><code>RELIABLE + TRANSIENT_LOCAL</code>，depth 1；状态变化时发布</td><td>状态为 INACTIVE、WAITING、ACTIVE、PAUSED 或 BLOCKED，并携带原因。</td></tr>
+        <tr><td><code>/oceanx/{vehicle}/visualization/path</code></td><td><code>nav_msgs/msg/Path</code></td><td><code>hydrox_visualization</code> → RViz</td><td>reliable，depth 10；每个被接受的 odom sample 发布，最高约 5 Hz</td><td>派生数据，不得作为控制或估计真值。</td></tr>
+        <tr><td><code>/oceanx/{vehicle}/visualization/markers</code></td><td><code>visualization_msgs/msg/MarkerArray</code></td><td><code>hydrox_visualization</code> → RViz</td><td>reliable，depth 10；默认 10 Hz</td><td>组合 odom、status、actuator 和 setpoint，仅用于展示。</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="控制源仲裁">控制源仲裁</h2>
+    <p><code>setpoint_mux</code> 是 <code>/hydrox/{vehicle}/in/setpoint</code> 的唯一 ROS Publisher。默认请求源是 <code>disabled</code>；选择 <code>auto</code> 时，从仍然新鲜的 source 中按下表选最高优先级：</p>
+    <table>
+      <thead><tr><th>Source</th><th>优先级</th><th>典型生产者</th></tr></thead>
+      <tbody>
+        <tr><td><code>manual</code></td><td>80</td><td><code>direct_cmd_adapter</code> / teleop</td></tr>
+        <tr><td><code>diagnostic</code></td><td>70</td><td><code>parity_diagnostic</code></td></tr>
+        <tr><td><code>formation</code></td><td>45</td><td><code>formation_follower</code></td></tr>
+        <tr><td><code>waypoint</code></td><td>40</td><td><code>waypoint_planner</code></td></tr>
+      </tbody>
+    </table>
+    <p>mux 只缓存状态恢复之后收到的新命令。估计状态消息 <code>VehicleState</code> 失联、字段非有限或 source 超时都会清空缓存并发布新的 <code>DISABLED</code> 命令；恢复顺序必须是“先收到新状态，再收到新 source command”，禁止重放失联前命令。</p>
+
+    <h2 id="qos-契约">QoS 契约</h2>
+    <table>
+      <thead><tr><th>接口族</th><th>Reliability</th><th>History</th><th>Durability</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td><code>/hydrox/{vehicle}/out/*</code>、<code>/oceanx/{vehicle}/out/*</code>、<code>/tf</code></td><td><code>BEST_EFFORT</code></td><td><code>KEEP_LAST</code></td><td><code>VOLATILE</code></td><td>连续状态/传感器流优先最新 sample，避免为旧状态排队重传。</td></tr>
+        <tr><td><code>/hydrox/{vehicle}/in/setpoint</code></td><td>ROS Publisher <code>RELIABLE</code>；HydroX reader 可请求 <code>BEST_EFFORT</code></td><td><code>KEEP_LAST</code></td><td><code>VOLATILE</code></td><td>兼容 DDS offered/requested 规则；命令有效性仍由 receive-time timeout 决定。</td></tr>
+        <tr><td><code>setpoint_sources/*</code>、<code>guidance/*</code>、<code>formation/goal</code></td><td><code>RELIABLE</code></td><td><code>KEEP_LAST</code>，通常 depth 10</td><td><code>VOLATILE</code></td><td>可靠传输不能代替 lease/watchdog。</td></tr>
+        <tr><td><code>source_status</code>、<code>formation_status</code></td><td><code>RELIABLE</code></td><td><code>KEEP_LAST</code>，depth 1</td><td><code>TRANSIENT_LOCAL</code></td><td>迟加入的监视器立即收到最新离散状态。</td></tr>
+        <tr><td>Service / Action</td><td><code>RELIABLE</code></td><td>ROS 2 默认</td><td>ROS 2 默认</td><td>请求、反馈、取消和终态不得静默丢失。</td></tr>
+      </tbody>
+    </table>
+    <p><strong>常见错误：</strong>订阅 HydroX 状态时只传队列深度 <code>10</code>，rclpy/rclcpp 会请求默认 <code>RELIABLE</code>，无法匹配 HydroX 的 <code>BEST_EFFORT</code> writer。Python 必须显式构造 BEST_EFFORT <code>QoSProfile</code>；C++ 必须调用 <code>.best_effort()</code> 或使用 <code>rclcpp::SensorDataQoS</code>。</p>
+
+    <h2 id="新鲜度与超时">新鲜度与超时</h2>
+    <p>所有安全相关 age 使用消费者本地单调接收时间。<code>header.stamp</code> 用于追踪和数据对齐，不证明远端仍存活。</p>
+    <table>
+      <thead><tr><th>边界</th><th>当前默认值</th><th>超时行为</th></tr></thead>
+      <tbody>
+        <tr><td>mux <code>VehicleState</code> freshness</td><td><code>state_timeout_sec = 0.5</code></td><td>清空全部 source，发布 DISABLED。</td></tr>
+        <tr><td>mux source lease</td><td><code>source_timeout_sec = 0.5</code></td><td>不再选择该 source；无其他有效 source 时发布 DISABLED。</td></tr>
+        <tr><td>manual / waypoint / formation / fleet 等 <code>VehicleState</code> freshness</td><td>通常 <code>0.5 s</code></td><td>停止生成控制输出或拒绝任务。</td></tr>
+        <tr><td>formation goal lease</td><td><code>0.75 s</code></td><td>follower 发布 DISABLED 释放 formation source。</td></tr>
+        <tr><td>dynamic pursuit lease</td><td>发布端默认 <code>1.0 s</code>，消费者上限 <code>2.0 s</code></td><td>waypoint planner 结束动态目标并释放 waypoint source。</td></tr>
+        <tr><td>HydroX 外部 setpoint</td><td><code>mission_timeout_s = 2.0</code></td><td><code>ControlSessionGate</code> 撤销命令，进入安全控制状态。</td></tr>
+        <tr><td>fleet 下游 Goal response / feedback</td><td>各 <code>2.0 s</code></td><td>取消或终止上游 Action；未确认终态的载具进入隔离。</td></tr>
+        <tr><td>fleet cancel grace</td><td><code>1.0 s</code></td><td>宽限期内等待下游终态，超时后保持载具隔离直到迟到终态到达。</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="坐标系与-frame-id">坐标系与 frame_id</h2>
+    <ul>
+      <li>世界位置、世界速度、姿态表达和 waypoint 使用 NED，单位为 SI。</li>
+      <li>机体线速度、角速度、IMU 和执行器使用 body FRD。</li>
+      <li><code>VehicleState</code>、truth、odometry parent 和 TF parent：<code>map_ned</code>。</li>
+      <li>机体量、odometry child 和 TF child：<code>{vehicle}/base_link_frd</code>。</li>
+      <li>receiver-local 声呐和 rangefinder：<code>{vehicle}/base_link_frd</code>。</li>
+    </ul>
+    <p>Odometry 和 TF 数字本身就是 NED/FRD。ENU/FLU 消费者必须通过 tf2 或显式转换改变数值；只把 <code>frame_id</code> 改成 <code>world</code>、<code>odom</code> 或 <code>base_link</code> 属于协议错误。</p>
+
+    <h2 id="自定义消息目录">自定义消息、Service 与 Action</h2>
+    <table>
+      <thead><tr><th>类型</th><th>主要语义</th><th>定义</th></tr></thead>
+      <tbody>
+        <tr><td><code>VehicleState</code></td><td>估计/调试六自由度状态；位置为 NED，线速度和角速度为 body FRD。</td><td><a href="../../ros/src/oceanx_interfaces/msg/VehicleState.msg"><code>VehicleState.msg</code></a></td></tr>
+        <tr><td><code>VehicleLocalPosition</code></td><td>位置、姿态、body velocity、深度和时间戳诊断快照。</td><td><a href="../../ros/src/oceanx_interfaces/msg/VehicleLocalPosition.msg"><code>VehicleLocalPosition.msg</code></a></td></tr>
+        <tr><td><code>SensorCombined</code></td><td>IMU、深度、DVL 和 GPS 的聚合导航快照。</td><td><a href="../../ros/src/oceanx_interfaces/msg/SensorCombined.msg"><code>SensorCombined.msg</code></a></td></tr>
+        <tr><td><code>ActuatorOutputs</code></td><td>归一化舵面/推力及物理角度、转速遥测。</td><td><a href="../../ros/src/oceanx_interfaces/msg/ActuatorOutputs.msg"><code>ActuatorOutputs.msg</code></a></td></tr>
+        <tr><td><code>VehicleStatus</code></td><td>GNC mode、arming、HIL connection 和 EKF 状态。</td><td><a href="../../ros/src/oceanx_interfaces/msg/VehicleStatus.msg"><code>VehicleStatus.msg</code></a></td></tr>
+        <tr><td><code>GNCSetpoint</code></td><td>HydroX 权威低层命令：mode、深度、航向/yaw rate、速度和 NED waypoint。</td><td><a href="../../ros/src/oceanx_interfaces/msg/GNCSetpoint.msg"><code>GNCSetpoint.msg</code></a></td></tr>
+        <tr><td><code>ControlSourceStatus</code></td><td>mux 请求源/实际源、age、freshness、failsafe 和原因。</td><td><a href="../../ros/src/oceanx_interfaces/msg/ControlSourceStatus.msg"><code>ControlSourceStatus.msg</code></a></td></tr>
+        <tr><td><code>GuidanceTarget</code></td><td>带 session 和 receive-time lease 的动态 NED 目标。</td><td><a href="../../ros/src/oceanx_interfaces/msg/GuidanceTarget.msg"><code>GuidanceTarget.msg</code></a></td></tr>
+        <tr><td><code>FormationGoal</code></td><td>每载具 NED 编队中心、槽位偏移、heading、speed 和 active 状态。</td><td><a href="../../ros/src/oceanx_interfaces/msg/FormationGoal.msg"><code>FormationGoal.msg</code></a></td></tr>
+        <tr><td><code>FormationStatus</code></td><td>多载具编队生命周期、成员和阻塞原因。</td><td><a href="../../ros/src/oceanx_interfaces/msg/FormationStatus.msg"><code>FormationStatus.msg</code></a></td></tr>
+        <tr><td><code>PassiveSonarBearing</code></td><td>receiver-local FRD 方位/俯仰和目标槽位。</td><td><a href="../../ros/src/oceanx_interfaces/msg/PassiveSonarBearing.msg"><code>PassiveSonarBearing.msg</code></a></td></tr>
+        <tr><td><code>AcousticNeighbors</code> / <code>AcousticContact</code></td><td>接收艇及延迟邻居联系；位置/线速度为发送时刻 NED，bearing 为接收艇 FRD。</td><td><a href="../../ros/src/oceanx_interfaces/msg/AcousticNeighbors.msg"><code>AcousticNeighbors.msg</code></a> / <a href="../../ros/src/oceanx_interfaces/msg/AcousticContact.msg"><code>AcousticContact.msg</code></a></td></tr>
+        <tr><td><code>RangeFinderScan</code></td><td>receiver-local 多射线距离和归一化距离。</td><td><a href="../../ros/src/oceanx_interfaces/msg/RangeFinderScan.msg"><code>RangeFinderScan.msg</code></a></td></tr>
+        <tr><td><code>SetControlSource</code></td><td>选择 mux source 并返回实际 active source 与原因。</td><td><a href="../../ros/src/oceanx_interfaces/srv/SetControlSource.srv"><code>SetControlSource.srv</code></a></td></tr>
+        <tr><td><code>ManageFormation</code></td><td>START/PAUSE/RESUME/STOP 编队事务。</td><td><a href="../../ros/src/oceanx_interfaces/srv/ManageFormation.srv"><code>ManageFormation.srv</code></a></td></tr>
+        <tr><td><code>FollowWaypoints</code></td><td>单载具静态航点 Goal、Result、Feedback 和取消生命周期。</td><td><a href="../../ros/src/oceanx_interfaces/action/FollowWaypoints.action"><code>FollowWaypoints.action</code></a></td></tr>
+        <tr><td><code>AssignFleetMission</code></td><td>跨艇任务分配、所选载具、阶段、ETA 和取消传播。</td><td><a href="../../ros/src/oceanx_interfaces/action/AssignFleetMission.action"><code>AssignFleetMission.action</code></a></td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="声学邻居当前字段限制">AcousticNeighbors 当前字段限制</h3>
+    <p>当前 HIL payload 每个 contact 实际传输 <code>sender_id</code>、range、propagation delay、depth、NED position、NED linear velocity、<code>yaw_ned_rad</code> 和前三个 payload 值。接口不再伪造 roll/pitch 或角速度零值；若未来传输完整姿态/角速度，必须新增具有明确 frame 的字段，并同时修改 HIL payload、HydroX parser/writer、消息注释、本文和序列化测试。</p>
+
+    <h2 id="service-action-生命周期">Service 与 Action 生命周期</h2>
+    <ul>
+      <li><code>FollowWaypoints</code> 是静态航点任务的权威生命周期；上层使用 result 释放载具，不从可能滞后的 <code>VehicleState.mission_state</code> 推断任务完成。</li>
+      <li><code>AssignFleetMission</code> 只在目标合法、载具状态新鲜且下游 Action server 可用时接受 Goal；取消会转发给对应 <code>FollowWaypoints</code>。</li>
+      <li>多载具任务取消只有在下游终态确认后才正常释放载具。取消拒绝、通信失败或宽限期结束仍无终态时，载具进入隔离，直到迟到终态解除。</li>
+      <li><code>ManageFormation START</code> 先校验完整配置、计算 slot 并创建新 ROS 实体，全部成功后才提交；失败不得破坏旧编队。</li>
+      <li>单载具编队把任何有限非负 spacing 归一化为 0；多载具 spacing 必须大于 0。</li>
+    </ul>
+
+    <h2 id="dds-名称映射">ROS 名称与 DDS 名称映射</h2>
+    <p>HydroX 使用 bare Micro XRCE-DDS。ROS 名称与 DDS 名称由 manifest 统一生成：</p>
+    <pre><code class="language-text">ROS: /hydrox/{vehicle}/out/state_estimate
+DDS: rt/hydrox/{vehicle}/out/state_estimate
+
+ROS: /oceanx/{vehicle}/out/acoustic_neighbors
+DDS: rt/oceanx/{vehicle}/out/acoustic_neighbors
+
+ROS: /tf
+DDS: rt/tf</code></pre>
+    <p><code>DdsPublisher</code> 使用同一清单创建 topic、DataWriter/DataReader 和节流周期。新增 bare-DDS 接口不能只在 ROS 侧声明消息；还必须分配不冲突的 topic/endpoint ID、补齐 CDR 序列化和契约测试。</p>
+
+    <h2 id="运行时检查">运行时检查</h2>
+    <pre><code class="language-bash">ros2 topic list
+ros2 topic info --verbose /hydrox/vehicle0/out/state_estimate
+ros2 topic echo /oceanx/vehicle0/control/source_status
+ros2 interface show oceanx_interfaces/msg/GNCSetpoint
+ros2 action list
+ros2 service list</code></pre>
+    <p>如果 topic 名和类型正确但没有数据，先用 <code>ros2 topic info --verbose</code> 检查 offered/requested QoS，再检查 <code>ROS_DOMAIN_ID</code>、vehicle name、DDS Agent 和 HydroX SITL 是否一致存活。</p>
+
+    <h2 id="与-xlog-的区别">与 XLog 的区别</h2>
+    <p><code>/hydrox/state</code>、<code>/hydrox/setpoint</code>、<code>/hydrox/control_error</code>、<code>/hydrox/controller_output</code>、<code>/hydrox/actuator</code>、<code>/hydrox/estimator_health</code> 和 <code>/hydrox/timing</code> 是 XLog 1.0 内部 stream 名，不是 ROS 2 Topic。XLog 格式、分段和回放边界见 <a href="../../doc/internal/replay_xlog.html">OceanX 回放、rosbag 与 XLog</a>。</p>
+
+    <h2 id="维护规则">维护规则</h2>
+    <ul>
+      <li>新增、删除或重命名任何 Topic、Service、Action 时，同一变更必须更新本文。</li>
+      <li>bare-DDS 接口必须同步更新 <code>dds_topic_manifest.h</code>、CDR writer/reader、ROS interface 和测试。</li>
+      <li>发布频率只在 manifest 或节点参数默认值中定义；本文记录并解释，不再在控制架构文档复制整张表。</li>
+      <li>任何安全相关订阅都必须明确 QoS、receive-time freshness、timeout 和恢复顺序。</li>
+      <li>任何新世界/机体字段都必须明确 NED、ENU、FRD 或 FLU；不得只靠字段名猜 frame。</li>
+      <li>调试 truth 和 visualization 派生数据不得成为控制、估计或物理的权威来源。</li>
+    </ul>
+  </article></main>
+</body>
+</html>

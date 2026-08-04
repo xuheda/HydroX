@@ -49,6 +49,14 @@ namespace hydrox
         bool write(const uint8_t *buf, size_t len) override;
         bool is_connected() const override { return _client != INVALID_SOCKET_VAL; }
 
+        /**
+         * Wait until inbound bytes are available or the timeout expires.
+         * Returns 1 when readable, 0 on timeout, and -1 when the connection
+         * is no longer usable. This wait never defines control time; it only
+         * avoids polling the host socket while no sensor sample is available.
+         */
+        int wait_readable(int timeout_ms);
+
         size_t pending_write_bytes() const { return _tx_sender.pending_bytes(); }
         uint64_t dropped_write_frames() const { return _tx_sender.dropped_frames(); }
 

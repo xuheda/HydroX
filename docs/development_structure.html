@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Stage 2 开发结构 · HydroX 文档</title>
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <header class="site-header"><div class="site-header__inner"><a class="site-title" href="index.html">HydroX 文档</a></div></header>
+  <main><article>
+    <h1>HydroX Stage 2 开发结构</h1>
+    <p>更新日期：2026-07-29</p>
+    <p><a href="index.html">返回 HydroX 文档首页</a> · <a href="codebase_overview.html">代码概览</a></p>
+
+    <h2>目标</h2>
+    <p>Stage 2 的目标是让 HydroX 成为独立飞控软件。HydroX 不依赖 PX4 或 ArduPilot 的运行时架构；当前固定使用 Apache NuttX 13.0.0 作为 RTOS 与 STM32H7 平台基础，并由 HydroX 维护 Pixhawk 6C 板级移植、平台适配、运行时和控制栈。</p>
+
+    <h2>依赖方向</h2>
+    <pre><code class="language-text">apps
+  ↓
+HydroX runtime
+  ↓
+estimation / GNC / allocation / protocol
+  ↓
+platform/api
+  ↑                    ↑
+platform/host      platform/nuttx
+                         ↑
+                  boards/pixhawk6c</code></pre>
+    <ul>
+      <li>算法不得包含 Windows、POSIX、NuttX、STM32 或 Pixhawk 头文件。</li>
+      <li><code>platform/api</code> 不依赖操作系统或板卡。</li>
+      <li><code>platform/nuttx</code> 只封装 NuttX，不保存 Pixhawk 6C 引脚和设备映射。</li>
+      <li><code>boards/pixhawk6c</code> 只负责启动、内存、引脚、总线、DMA 和设备注册。</li>
+      <li><code>apps/pixhawk6c_hitl</code> 只组装运行时，不实现驱动或控制算法。</li>
+    </ul>
+
+    <h2>SITL 与 HITL 对齐</h2>
+    <table>
+      <thead><tr><th>职责</th><th>SITL</th><th>Pixhawk 6C HITL</th><th>共用契约/实现</th></tr></thead>
+      <tbody>
+        <tr><td>单调时间</td><td><code>HostClock</code></td><td><code>NuttxClock</code></td><td><code>platform::Clock</code></td></tr>
+        <tr><td>周期等待</td><td><code>HostSleeper</code></td><td><code>NuttxSleeper</code></td><td><code>PeriodicScheduler</code></td></tr>
+        <tr><td>命令权限</td><td>Host 单调时间输入</td><td>NuttX 单调时间输入</td><td><code>ControlSessionGate</code></td></tr>
+        <tr><td>状态/事件交换</td><td>Host 临界区</td><td>NuttX 临界区/队列</td><td>HydroBus 固定内存类型</td></tr>
+        <tr><td>估计、GNC、分配</td><td>HydroX core</td><td>HydroX core</td><td>完全共用</td></tr>
+        <tr><td>仿真数据链路</td><td>OceanX TCP</td><td>OceanX TCP → 本机 HITL Router → 独立 UART/USB</td><td>HydroX 侧 <code>ByteStream</code> 平台适配</td></tr>
+        <tr><td>DDS、QGC、PC XLog</td><td>启用</td><td>默认不进入实时链</td><td>SITL 集成专属</td></tr>
+        <tr><td>物理执行器输出</td><td>无</td><td>HITL 固件禁用</td><td>HITL 安全策略</td></tr>
+      </tbody>
+    </table>
+    <p>命令 freshness 与 timeout 始终使用 HydroX 平台单调时钟，保证暂停、回滚或慢放不会延长命令权限。导航估计、制导控制和执行器模型则统一使用输入 measurement timestamp；仿真链路由 HIL 消息承载该时间戳，真实传感器驱动遵循相同契约。</p>
+    <p>OceanX 已提供 <code>-OceanXRunMode=hitl</code>：不自动启动本机 <code>hydrox_sitl</code> 或 DDS Agent，强制 RTF 1，并在每次连接或暂停恢复后先发送当前 <code>HIL_SENSOR</code>，再接受执行器权限。HITL Router、共享运行时和 Pixhawk 应用监督循环已经实现；当前剩余硬件边界是 Pixhawk 6C BSP、UART/USB 驱动、已验证链接脚本和可烧录固件。</p>
+
+    <h2>当前完成状态</h2>
+    <ul>
+      <li><code>platform/api</code>：时钟、等待、非阻塞字节流、临界区、任务、存储和看门狗契约。</li>
+      <li><code>platform/host</code>：PC 时钟、等待器与临界区。</li>
+      <li><code>platform/nuttx</code>：NuttX 时钟与等待器。</li>
+      <li>HydroBus：latest-value topic 与有界 SPSC 队列。</li>
+      <li>共享运行时：固定周期调度、迟到/错过周期处理、连接代次、传感器就绪、旧命令拒绝和超时撤权。</li>
+      <li>SITL 已使用 Host 平台适配和共享运行时组件。</li>
+      <li>Pixhawk 6C HITL 入口已改成 NuttX 应用结构；真实 BSP 尚未完成，因此不会生成占位固件。</li>
+      <li>PC 构建当前注册 27 项 CTest，包含共享运行时、假板卡 HITL 端到端链路和真实入口链接检查。</li>
+    </ul>
+
+    <h2>下一步</h2>
+    <ol>
+      <li>完成 Pixhawk 6C 最小 NuttX 板级移植：控制台、状态灯、时钟、缓存和 DMA 内存。</li>
+      <li>实现 Pixhawk 6C 非阻塞 UART/USB、RK3588 指令源、看门狗和参数存储的真实 BSP 适配。</li>
+      <li>核验 bootloader 内存布局、缓存和 DMA 区域并完成上板烧录。</li>
+      <li>补齐板端日志、复位原因、硬件故障注入和 24 小时稳定性验证。</li>
+    </ol>
+  </article></main>
+</body>
+</html>

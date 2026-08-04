@@ -30,12 +30,13 @@ int main()
     config.vehicle = "test_vehicle";
     config.vehicle_type = "EcaA9";
     config.xlog = path.string();
+    config.control_feedback_source = sitl::ControlFeedbackSource::TruthDebug;
 
     const FossenControlParams params = builtin_fossen_control_params("EcaA9");
     if (!params.valid)
         return fail("built-in vehicle parameters");
 
-    AUVState state = AUVState::zeros();
+    NavigationState state = NavigationState::zeros();
     state.depth_m = 5.0;
     state.dvl_valid = true;
 
@@ -95,6 +96,22 @@ int main()
     input.read(reinterpret_cast<char *>(&header), sizeof(header));
     if (!input || std::memcmp(header.magic, "XLOG", 4) != 0)
         return fail("recorded XLog header");
+
+    std::string metadata(
+        static_cast<std::size_t>(header.metadata_len),
+        '\0');
+    input.read(metadata.data(), static_cast<std::streamsize>(metadata.size()));
+    if (!input ||
+        metadata.find("\"control_feedback_source\":\"truth_debug\"") ==
+            std::string::npos)
+    {
+        return fail("control feedback source recorded in XLog metadata");
+    }
+    if (metadata.find("\"publish_truth_state\":false") ==
+        std::string::npos)
+    {
+        return fail("DDS truth publication setting recorded in XLog metadata");
+    }
     input.close();
 
     if (std::filesystem::file_size(path) <= sizeof(xlog::FileHeader))

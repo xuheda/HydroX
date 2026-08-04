@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VehicleBundle 控制契约 · HydroX 文档</title>
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <header class="site-header"><div class="site-header__inner"><a class="site-title" href="index.html">HydroX 文档</a></div></header>
+  <main><article><h1 id="vehiclebundle-控制契约">VehicleBundle 控制契约</h1>
+<p><code>VehicleBundle</code> 是 HydroX 的独立载具配置格式。它描述运行时控制所需的最小信息，而不是某个仿真器的完整物理资产。</p>
+<h2 id="边界">边界</h2>
+<ul><li>HydroX 核心读取：控制构型、控制导向质量/惯量、执行器布局与约束、控制器默认调参。</li><li>仿真器保留：SDF、URDF、碰撞网格、视觉资源、完整水动力/气动力模型及其导入来源。</li><li>板级适配器保留：PWM、CAN、DShot 或网络端口映射。</li></ul>
+<p>因此 Bundle 中禁止出现特定仿真器的工程路径、硬件引脚号或资产引用。仿真器适配器可以将其资产导出或转换为 Bundle，但核心不反向探测适配器的目录。</p>
+<h2 id="目录与加载">目录与加载</h2>
+<p>仓库的公开示例位于 <code>profiles/</code>：</p>
+<ul><li><code>generic-auv-fin</code>：带舵和螺旋桨的细长 AUV；</li><li><code>generic-rov-6dof</code>：八推进器 ROV，布局直接进入矩阵分配器；</li><li><code>generic-quad-x</code>：标准 X 构型四旋翼。</li><li><code>generic-usv-twin-prop</code>：双桨差速 USV；</li><li><code>generic-fixed-wing</code>：固定翼；</li><li><code>generic-vtol-lift-cruise</code>：升力加巡航 VTOL。</li></ul>
+<p>SITL 显式加载 Bundle：</p>
+<pre><code class="language-text">hydrox_sitl --vehicle-bundle profiles/generic-rov-6dof/vehicle-bundle.json</code></pre>
+<p>旧的 <code>--vehicle-params</code> 与 <code>--vehicle-params-dir</code> 仍然可用，但只能加载用户明确提供的文件或目录；不会再扫描环境变量、当前目录、相邻工程或机器固定路径。</p>
+<h2 id="schema-v1">Schema v1</h2>
+<p>每个文档必须包含：</p>
+<pre><code class="language-json">{
+  "schema_version": "1.0",
+  "id": "generic-rov-6dof",
+  "control_contract": "hydrox.control/thruster-6dof@1",
+  "archetype": "thruster",
+  "vehicle_class": "uuv",
+  "control_model": {},
+  "actuator_layout": {}
+}</code></pre>
+<p>目前支持的 <code>archetype</code> 是 <code>slender_body_fin</code>、<code>thruster</code>、<code>surface</code>、<code>multirotor</code>、<code>fixed_wing</code> 和 <code>vtol</code>。<code>vehicle_class</code> 使用 <code>uuv</code>、<code>usv</code>、<code>uav_multirotor</code>、<code>uav_fixed_wing</code> 或 <code>uav_vtol</code>。</p>
+<p>对于 <code>thruster</code>，<code>actuator_layout.thrusters</code> 的每项必须提供：</p>
+<pre><code class="language-json">{
+  "id": "horizontal-front-port",
+  "position_m": [0.28, 0.20, 0.0],
+  "direction_body": [0.7071, 0.7071, 0.0],
+  "max_thrust_n": 120.0
+}</code></pre>
+<p>坐标使用机体 FRD（前、右、下），单位为 SI。该布局是逻辑执行器布局，不表示物理输出通道。</p>
+<h2 id="验证">验证</h2>
+<p>加载时会检查 schema 版本、契约标识、控制构型、载具类别匹配、质量/推力约束，以及推进器方向和最大推力。验证失败时，HydroX 不会构建控制栈。</p>
+<p>多推进器 Bundle 还会报告：</p>
+<ul><li><code>logical_actuator_count</code>：逻辑推进器数量；当前 <code>ActuatorCmd</code> 协议最多支持 8 路，超过时拒绝加载；</li><li><code>allocation_rank</code>：由推进器位置和方向构成的 6×N 有效性矩阵的秩。小于 6 表示布局欠驱动，会记录警告；这类布局仍可用于只启用其可实现轴的控制器。</li></ul>
+<p>后续版本将扩展为：单位维度检查、执行器冗余/故障策略、标定覆盖层与 Bundle 内容哈希。</p>
+<h2 id="迁移现有仿真配置">迁移现有仿真配置</h2>
+<ol><li>从原始仿真模型提取 HydroX 实际消费的控制字段。</li><li>生成或人工校核 <code>VehicleBundle</code>，并保存来源与许可证到适配器或导入工具中。</li><li>用场景、HIL 和实测日志产生校准覆盖层；不要直接修改基础 Bundle。</li><li>将仿真器专用 JSON/SDF 留在对应适配器项目中。</li></ol>
+<p>这使 OceanX SITL、Pixhawk 6C HITL 和真实硬件适配器都能提供同一种控制契约，而不让任何仿真器、板卡或第三方飞控架构成为 HydroX 的运行时前提。</p></article></main>
+</body>
+</html>

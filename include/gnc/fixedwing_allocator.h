@@ -15,8 +15,8 @@ namespace hydrox
             double aileron_kp = 1.8;
             double aileron_kd = 0.25;
             double rudder_kp = 0.35;
-            double throttle_trim = 0.55;
-            double throttle_kp = 0.04;
+            double throttle_trim = 0.30;
+            double throttle_kp = 0.035;
         };
 
         explicit FixedWingAllocator(const Params &p = {});

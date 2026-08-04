@@ -1,6 +1,7 @@
 // Copyright (c) 2026 OceanX. Author: xuheda
 #pragma once
 
+#include "estimation_profile.h"
 #include "mavlink_hil.h"
 #include "navigation_measurements.h"
 #include "types.h"
@@ -57,7 +58,8 @@ namespace hydrox
     public:
         struct Params
         {
-            VehicleClass vehicle_class = VehicleClass::UUV;
+            EstimationProfile estimation_profile =
+                estimation_profile_for(VehicleClass::UUV);
             AccelMode accel_mode = AccelMode::Auto;
             double dvl_timeout_s = 0.5;
             double gps_timeout_s = 3.0;
@@ -75,9 +77,33 @@ namespace hydrox
             double truth_heading_variance = 0.0025;
             double gps_origin_lat_deg = 0.0;
             double gps_origin_lon_deg = 0.0;
-            double gps_origin_alt_m = 0.0;
+            /** MAVLink HIL_GPS altitude datum: mean sea level, metres. */
+            double gps_origin_altitude_msl_m = 0.0;
+            double gps_geodetic_max_radius_m = 10000.0;
             double gps_min_variance = 1.0e-4;
             double gps_max_variance = 1.0e6;
+
+            Params() = default;
+            Params(
+                const EstimationProfile &profile,
+                AccelMode mode = AccelMode::Auto)
+                : estimation_profile(profile),
+                  accel_mode(mode),
+                  dvl_velocity_variance(profile.ekf.r_dvl),
+                  water_dvl_velocity_variance(
+                      profile.ekf.r_relative_medium_velocity),
+                  depth_variance(profile.ekf.r_vertical),
+                  gps_xy_variance(profile.ekf.r_gps_xy),
+                  gps_z_variance(profile.ekf.r_gps_z),
+                  gps_velocity_variance(profile.ekf.r_gps_velocity)
+            {
+            }
+            Params(
+                VehicleClass vehicle_class,
+                AccelMode mode = AccelMode::Auto)
+                : Params(estimation_profile_for(vehicle_class), mode)
+            {
+            }
         };
 
         explicit SensorAdapter(const Params &p = {});

@@ -1,0 +1,15 @@
+{
+  "schema_version": 1.0,
+  "comment": [
+    "Single EcaA9 baseline collection scenario.",
+    "Learning residual control remains disabled; OceanX owns the normal HydroX SITL process."
+  ],
+  "vehicles": [
+    {
+      "name": "ecaa9_train",
+      "location": [0.0, 0.0, 100.0],
+      "rotation": [0.0, 0.0, 0.0],
+      "vehicle_profile": "EcaA9"
+    }
+  ]
+}

@@ -6,6 +6,7 @@
 #include <uxr/client/util/ping.h>
 
 #include "dds_cdr_helpers.h"
+#include "frame_contract.h"
 
 #include <algorithm>
 #include <cmath>
@@ -24,6 +25,14 @@ namespace hydrox
           vehicle_(vehicle),
           publish_truth_state_(publish_truth_state)
     {
+        if (!frame_contract::is_valid_frame_token(vehicle_))
+        {
+            std::fprintf(
+                stderr,
+                "[FC][DDS] invalid vehicle frame token '%s'; expected [A-Za-z0-9_]+\n",
+                vehicle_.c_str());
+            return;
+        }
         const std::string agent_port_str = std::to_string(agent_port);
         if (!uxr_init_udp_transport(&transport_, UXR_IPv4,
                                     agent_ip.c_str(), agent_port_str.c_str()))
@@ -61,8 +70,11 @@ namespace hydrox
         init_entities();
         if (connected_)
         {
+            // Client keys are consecutive UE ports.  Phase the probes so the
+            // shared Agent is never hit by eight synchronous ping requests.
+            const auto phase = std::chrono::milliseconds((key % 8u) * 125u);
             next_health_check_ = std::chrono::steady_clock::now() +
-                                 std::chrono::milliseconds(500);
+                                 std::chrono::seconds(1) + phase;
             std::printf("[FC][DDS] ready vehicle=%s key=%u domain=%u agent=%s:%u\n",
                         vehicle_.c_str(), static_cast<unsigned>(key),
                         static_cast<unsigned>(domain_id_),
@@ -216,10 +228,15 @@ namespace hydrox
     {
         uxrObjectId oid = uxr_object_id(id, UXR_DATAWRITER_ID);
         uxrQoS_t qos{};
-        qos.durability = UXR_DURABILITY_TRANSIENT_LOCAL;
+        // High-rate telemetry is a live data stream.  Retaining every writer's
+        // history in the shared Agent makes an eight-vehicle run grow queues
+        // until all sessions reconnect together.  Controllers already reject
+        // stale state, so a volatile, single-sample stream is the correct
+        // contract here.
+        qos.durability = UXR_DURABILITY_VOLATILE;
         qos.reliability = UXR_RELIABILITY_BEST_EFFORT;
         qos.history = UXR_HISTORY_KEEP_LAST;
-        qos.depth = 0; // PX4-style: omit explicit depth, use agent/default history.
+        qos.depth = 1;
         uint16_t req = uxr_buffer_create_datawriter_bin(
             &session_, out_reliable_, oid, pub_id, topic_id, qos, UXR_REPLACE);
         return wait_entity_created("create datawriter", req)
@@ -315,8 +332,8 @@ namespace hydrox
         if (fail_if_invalid(dw_status_id_))
             return;
 
-        dw_auv_state_id_ = create_writer_for(dds_topics::kAuvState);
-        if (fail_if_invalid(dw_auv_state_id_))
+        dw_state_estimate_id_ = create_writer_for(dds_topics::kStateEstimate);
+        if (fail_if_invalid(dw_state_estimate_id_))
             return;
 
         if (publish_truth_state_)
@@ -410,9 +427,9 @@ namespace hydrox
         const auto now = std::chrono::steady_clock::now();
         if (now < next_health_check_)
             return true;
-        next_health_check_ = now + std::chrono::milliseconds(500);
+        next_health_check_ = now + std::chrono::seconds(1);
 
-        if (uxr_ping_agent_session(&session_, 50, 1))
+        if (uxr_ping_agent_session(&session_, 250, 1))
         {
             health_miss_count_ = 0;
             return true;
@@ -434,7 +451,7 @@ namespace hydrox
             return;
 
         const uint64_t stamp_ns = bearing.time_usec * 1000ULL;
-        const std::string frame = vehicle_ + "/base_link_frd";
+        const std::string frame = frame_contract::body_frd(vehicle_);
         const bool buffered = buffer_topic(
             out_best_effort_,
             dw_passive_sonar_bearing_id_,
@@ -462,7 +479,7 @@ namespace hydrox
             return;
 
         const uint64_t stamp_ns = neighbors.time_usec * 1000ULL;
-        const std::string frame = vehicle_ + "/base_link_frd";
+        const std::string frame = frame_contract::body_frd(vehicle_);
         const uint32_t count =
             static_cast<uint32_t>(std::min<size_t>(neighbors.contacts.size(), 4));
 
@@ -492,10 +509,7 @@ namespace hydrox
                         cdr.float32(value);
                     for (float value : contact.velocity_ned)
                         cdr.float32(value);
-                    for (float value : contact.attitude_rpy)
-                        cdr.float32(value);
-                    for (int k = 0; k < 3; ++k)
-                        cdr.float32(0.0f);
+                    cdr.float32(contact.yaw_ned_rad);
                     for (int k = 0; k < 8; ++k)
                     {
                         const float value = (k < 3) ? contact.payload[k] : 0.0f;
@@ -517,7 +531,7 @@ namespace hydrox
             return;
 
         const uint64_t stamp_ns = scan.time_usec * 1000ULL;
-        const std::string frame = vehicle_ + "/base_link_frd";
+        const std::string frame = frame_contract::body_frd(vehicle_);
         const uint32_t count =
             static_cast<uint32_t>(std::min<size_t>(scan.ranges_m.size(), 48));
         const bool buffered = buffer_topic(
@@ -568,6 +582,19 @@ namespace hydrox
         if (!connected_)
             return;
 
+        const bool publish_snapshot =
+            (last_snapshot_pub_us_ == 0) ||
+            (fs.timestamp_us < last_snapshot_pub_us_) ||
+            (fs.timestamp_us - last_snapshot_pub_us_ >= SNAPSHOT_PERIOD_US);
+        if (publish_snapshot)
+            last_snapshot_pub_us_ = fs.timestamp_us;
+        const bool publish_diagnostics =
+            (last_diagnostics_pub_us_ == 0) ||
+            (fs.timestamp_us < last_diagnostics_pub_us_) ||
+            (fs.timestamp_us - last_diagnostics_pub_us_ >= DIAGNOSTICS_PERIOD_US);
+        if (publish_diagnostics)
+            last_diagnostics_pub_us_ = fs.timestamp_us;
+
         // Timestamp (us -> ns)
         const uint64_t stamp_ns = fs.timestamp_us * 1000ULL;
         const bool publish_status =
@@ -585,6 +612,11 @@ namespace hydrox
              (fs.timestamp_us < last_truth_state_pub_us_) ||
              (fs.timestamp_us - last_truth_state_pub_us_ >= TRUTH_STATE_PERIOD_US));
 
+        // ── Low-rate diagnostics ──────────────────────────────────────────────
+        // These feeds are for inspection and recording.  They do not drive the
+        // control loop, so bound them separately from NavigationState in fleet runs.
+        if (publish_diagnostics)
+        {
         // ── VehicleLocalPosition ──────────────────────────────────────────────
         {
             buffer_topic(
@@ -593,7 +625,7 @@ namespace hydrox
                 "VehicleLocalPosition",
                 [&](dds_cdr::Writer &cdr)
                 {
-                    cdr.header(stamp_ns, "map_ned");
+                    cdr.header(stamp_ns, frame_contract::kMapNed);
                     for (double value : fs.eta)
                         cdr.float64(value);
                     for (double value : fs.nu)
@@ -607,7 +639,7 @@ namespace hydrox
 
         // ── SensorCombined ────────────────────────────────────────────────────
         {
-            const std::string sensor_frame = vehicle_ + "/base_link_frd";
+            const std::string sensor_frame = frame_contract::body_frd(vehicle_);
             const bool gps_ok = (fs.gps_fix >= 3);
             buffer_topic(
                 out_best_effort_,
@@ -634,10 +666,9 @@ namespace hydrox
                     cdr.uint8(fs.gps_satellites);
                 });
         }
-
         // ── ActuatorOutputs ───────────────────────────────────────────────────
         {
-            const std::string actuator_frame = vehicle_ + "/base_link_frd";
+            const std::string actuator_frame = frame_contract::body_frd(vehicle_);
             buffer_topic(
                 out_best_effort_,
                 dw_actuator_id_,
@@ -650,6 +681,7 @@ namespace hydrox
                     cdr.float64_array(fs.fin_deg, 4);
                     cdr.float64(static_cast<double>(fs.rpm));
                 });
+        }
         }
 
         // ── VehicleStatus (1 Hz) ────────────────────────────────────
@@ -671,15 +703,16 @@ namespace hydrox
                 last_status_pub_us_ = fs.timestamp_us;
         }
 
-        // ── AUVState ─────────────────────────────────────────────────────────
+        // ── StateEstimate ────────────────────────────────────────────────────
+        if (publish_snapshot)
         {
             buffer_topic(
                 out_best_effort_,
-                dw_auv_state_id_,
-                "AUVState",
+                dw_state_estimate_id_,
+                "VehicleState",
                 [&](dds_cdr::Writer &cdr)
                 {
-                    cdr.header(stamp_ns, "map_ned");
+                    cdr.header(stamp_ns, frame_contract::kMapNed);
                     cdr.string(vehicle_.c_str());
                     for (double value : fs.eta)
                         cdr.float64(value);
@@ -700,7 +733,7 @@ namespace hydrox
                 "TruthState",
                 [&](dds_cdr::Writer &cdr)
                 {
-                    cdr.header(stamp_ns, "map_ned");
+                    cdr.header(stamp_ns, frame_contract::kMapNed);
                     cdr.string(vehicle_.c_str());
                     for (double value : fs.truth_eta)
                         cdr.float64(value);
@@ -716,25 +749,29 @@ namespace hydrox
 
         if (publish_odom_tf)
         {
-            const std::string child_frame = vehicle_ + "/base_link_frd";
+            const std::string child_frame = frame_contract::body_frd(vehicle_);
 
-            const bool odom_buffered = buffer_topic(
-                out_best_effort_,
-                dw_odom_id_,
-                "Odometry",
-                [&](dds_cdr::Writer &cdr)
-                {
-                    cdr.header(stamp_ns, "map_ned");
-                    cdr.string(child_frame.c_str());
-                    cdr.float64(fs.eta[0]);
-                    cdr.float64(fs.eta[1]);
-                    cdr.float64(fs.eta[2]);
-                    cdr.quaternion_rpy(fs.eta[3], fs.eta[4], fs.eta[5]);
-                    cdr.covariance_36(fs.pose_cov);
-                    for (double value : fs.nu)
-                        cdr.float64(value);
-                    cdr.covariance_36(fs.twist_cov);
-                });
+            bool odom_buffered = false;
+            if (fs.odometry_covariance_valid != 0)
+            {
+                odom_buffered = buffer_topic(
+                    out_best_effort_,
+                    dw_odom_id_,
+                    "Odometry",
+                    [&](dds_cdr::Writer &cdr)
+                    {
+                        cdr.header(stamp_ns, frame_contract::kMapNed);
+                        cdr.string(child_frame.c_str());
+                        cdr.float64(fs.eta[0]);
+                        cdr.float64(fs.eta[1]);
+                        cdr.float64(fs.eta[2]);
+                        cdr.quaternion_rpy(fs.eta[3], fs.eta[4], fs.eta[5]);
+                        cdr.covariance_36(fs.pose_cov);
+                        for (double value : fs.nu)
+                            cdr.float64(value);
+                        cdr.covariance_36(fs.twist_cov);
+                    });
+            }
 
             const bool tf_buffered = buffer_topic(
                 out_best_effort_,
@@ -743,7 +780,7 @@ namespace hydrox
                 [&](dds_cdr::Writer &cdr)
                 {
                     cdr.uint32(1u);
-                    cdr.header(stamp_ns, "map_ned");
+                    cdr.header(stamp_ns, frame_contract::kMapNed);
                     cdr.string(child_frame.c_str());
                     cdr.float64(fs.eta[0]);
                     cdr.float64(fs.eta[1]);
@@ -751,7 +788,8 @@ namespace hydrox
                     cdr.quaternion_rpy(fs.eta[3], fs.eta[4], fs.eta[5]);
                 });
 
-            if (odom_buffered && tf_buffered)
+            if ((fs.odometry_covariance_valid == 0 || odom_buffered) &&
+                tf_buffered)
                 last_odom_tf_pub_us_ = fs.timestamp_us;
         }
 

@@ -1,7 +1,7 @@
 /**
  * main_sitl.cpp — HydroX FC SITL process entry point
  *
- * Analogous to: px4_sitl process (independently executable, zero ROS dependency)
+ * Standalone HydroX autopilot process with no ROS runtime dependency.
  *
  * Architecture:
  *   UE5 FOceanXCommBridge <─TCP─> hydrox_sitl [uxr client] ──UDP──> MicroXRCEAgent ──> ROS 2
@@ -18,40 +18,45 @@
  * Usage:
  *   hydrox_sitl [--ue5-host 127.0.0.1] [--ue5-port 14600]
  *                  [--qgc-host 255.255.255.255] [--qgc-port 14550]
- *                  [--vehicle auv0] [--vehicle-type EcaA9]
- *                  [--vehicle-params %OCEANX_ROOT%\engine\Content\Fossen\eca_a9_params.json]
- *                  [--vehicle-params-dir %OCEANX_ROOT%\engine\Content\Fossen]
+ *                  [--vehicle vehicle0] [--vehicle-type EcaA9]
+ *                  [--vehicle-bundle profiles/generic-auv-fin/vehicle-bundle.json]
+ *                  [--vehicle-params path/to/legacy_params.json]
  *                  [--dds-host 127.0.0.1] [--dds-port 8888] [--ros-domain-id 0]
  *                  [--mavlink-signing-key-file D:\secure\hil.key]
  *                  [--mavlink-signing-link-id 0]
  *                  [--ekf-accel auto|off|on]
  *                  [--xlog auto|off|path.xlog]
- *                  [--time-mode hil|wall]
  *                  [--parent-pid UE_PROCESS_ID]
  *                  [--publish-truth-state true|false]
  *                  [--allow-truth-heading-aid true|false]
+ *                  [--control-feedback-source estimated_state|truth_debug]
  *                  [--rate 100]
  *                  [--depth 5.0] [--heading 0.0] [--surge 0.0]
  *                  [--mission-radius 3.0] [--mission-timeout 2.0]
  *                  [--mode DISABLED]
  */
-#include "ekf.h"
 #include "fossen_vehicle_params.h"
+#include "vehicle_bundle.h"
 #include "mavlink_signing.h"
 #include "gnc/control_factory.h"
 #include "gnc/control_interfaces.h"
-#include "gnc/energy_model.h"
-#include "gnc/motor_model.h"
+#ifdef HYDROX_ENABLE_RESIDUAL_RL
+#include "learning/residual_rl.h"
+#endif
+#include "hydrox/platform/host/host_clock.h"
+#include "hydrox/platform/host/host_sleeper.h"
+#include "hydrox/runtime/hil_runtime.h"
 #include "mavlink_hil.h"
+#include "odometry_contract.h"
 #include "sensor_adapter.h"
 #ifdef HYDROX_DDS_ENABLED
 #include "sitl/dds_worker.h"
 #endif
+#include "sitl/control_feedback.h"
 #include "sitl/sitl_config.h"
 #include "sitl/sitl_platform.h"
 #include "sitl/sitl_xlog.h"
 #include "tcp_transport.h"
-#include "ue_control_session.h"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -59,6 +64,7 @@
 #include <csignal>
 #include <cstddef>
 #include <cstdio>
+#include <deque>
 #include <exception>
 #include <memory>
 #include <string>
@@ -68,6 +74,7 @@
 using namespace hydrox;
 using namespace std::chrono_literals;
 namespace sitl = hydrox::sitl;
+namespace runtime = hydrox::runtime;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Global shutdown flag
@@ -75,29 +82,25 @@ namespace sitl = hydrox::sitl;
 static std::atomic<bool> g_running{true};
 static void sig_handler(int) { g_running = false; }
 
-enum class MissionState : uint8_t
+#ifdef HYDROX_ENABLE_RESIDUAL_RL
+class ResidualAugmentor final : public runtime::IWrenchAugmentor
 {
-    IDLE = 0,
-    RUNNING = 1,
-    COMPLETE = 2,
-    FAILED = 3,
-};
+public:
+    void reset() override { module_.reset(); }
 
-static const char *mission_state_name(MissionState s)
-{
-    switch (s)
+    Wrench update(const NavigationState &estimated_state,
+                  const GNCSetpoint &setpoint,
+                  const Wrench &base_wrench,
+                  double dt) override
     {
-    case MissionState::RUNNING:
-        return "RUNNING";
-    case MissionState::COMPLETE:
-        return "COMPLETE";
-    case MissionState::FAILED:
-        return "FAILED";
-    case MissionState::IDLE:
-    default:
-        return "IDLE";
+        return module_.update(
+            {estimated_state, setpoint, base_wrench}, dt);
     }
-}
+
+private:
+    learning::ResidualRlModule module_;
+};
+#endif
 
 // ─────────────────────────────────────────────────────────────────────────────
 // main
@@ -128,6 +131,8 @@ int main(int argc, char *argv[])
         std::fprintf(stderr, "[FC] Network initialization failed.\n");
         return 4;
     }
+    hydrox::platform::host::HostClock monotonic_clock;
+    hydrox::platform::host::HostSleeper monotonic_sleeper;
 
     sitl::ParentProcessGuard parent_guard(cfg.parent_pid);
     if (!parent_guard.arm())
@@ -154,6 +159,16 @@ int main(int argc, char *argv[])
     std::printf("[FC] EKF:    accel=%s truth_heading_aid=%s\n",
                 sitl::accel_mode_name(accel_mode),
                 cfg.allow_truth_heading_aid ? "ON(debug)" : "OFF");
+    std::printf("[FC] Control feedback: %s\n",
+                sitl::control_feedback_source_name(
+                    cfg.control_feedback_source));
+    if (cfg.control_feedback_source ==
+        sitl::ControlFeedbackSource::TruthDebug)
+    {
+        std::fprintf(
+            stderr,
+            "[FC] WARNING: TRUTH DEBUG feedback is enabled; this run does not validate estimator-closed-loop control.\n");
+    }
 
     MavlinkSigningConfig mavlink_signing;
     if (!cfg.mavlink_signing_key_file.empty())
@@ -179,8 +194,17 @@ int main(int argc, char *argv[])
 
     // ── Autopilot Core Components ──────────────────────────────────────────────
     std::string params_error;
-    const auto vehicle_params = load_fossen_control_params(
-        cfg.vehicle_type, cfg.vehicle_params, cfg.vehicle_params_dir, &params_error);
+    VehicleBundle vehicle_bundle;
+    const bool use_vehicle_bundle = !cfg.vehicle_bundle.empty();
+    FossenControlParams vehicle_params;
+    if (use_vehicle_bundle)
+    {
+        vehicle_bundle = load_vehicle_bundle(cfg.vehicle_bundle, &params_error);
+        vehicle_params = vehicle_bundle.control;
+    }
+    else
+        vehicle_params = load_fossen_control_params(
+            cfg.vehicle_type, cfg.vehicle_params, cfg.vehicle_params_dir, &params_error);
     if (!vehicle_params.valid)
     {
         std::fprintf(stderr,
@@ -191,6 +215,23 @@ int main(int argc, char *argv[])
     std::printf("[FC] Params: %s%s\n",
                 vehicle_params.source_path.c_str(),
                 vehicle_params.loaded_from_json ? "" : " (fallback)");
+    if (use_vehicle_bundle)
+    {
+        std::printf("[FC] Bundle: %s  contract=%s fingerprint=%016llx\n",
+                    vehicle_bundle.id.c_str(),
+                    vehicle_bundle.control_contract.c_str(),
+                    static_cast<unsigned long long>(vehicle_bundle.fingerprint));
+        if (vehicle_bundle.logical_actuator_count != 0)
+            std::printf("[FC] Bundle allocation: actuators=%zu rank=%zu/6\n",
+                        vehicle_bundle.logical_actuator_count,
+                        vehicle_bundle.allocation_rank);
+        for (const auto &issue : vehicle_bundle.validation)
+        {
+            if (issue.severity == BundleIssueSeverity::Warning)
+                std::fprintf(stderr, "[FC] Bundle warning [%s]: %s\n",
+                             issue.field.c_str(), issue.message.c_str());
+        }
+    }
     const std::string initial_mode = cfg.init_mode;
     std::printf("[FC] Alloc:  S_fin=%.5fm2 CL=(%.2f, %.2f) x_fin=%.3fm "
                 "D_prop=%.3fm n_max=%.0frpm Tmax=%.1fN u_min=%.2fm/s\n",
@@ -210,74 +251,89 @@ int main(int argc, char *argv[])
     TcpTransport transport(cfg.ue5_host, cfg.ue5_port, /*client=*/true);
     MavlinkHIL codec(1, 1, mavlink_signing);
     const uint8_t mav_type = sitl::mav_type_for_vehicle_class(vehicle_params.vehicle_class);
-    EKF ekf;
-    SensorAdapter::Params sensor_params;
-    sensor_params.vehicle_class = vehicle_params.vehicle_class;
-    sensor_params.accel_mode = accel_mode;
+    const EstimationProfile estimation_profile =
+        estimation_profile_for(vehicle_params.vehicle_class);
+    std::printf("[FC] Estimator: class=%s vertical=%s medium=%s estimate_medium=%s\n",
+                sitl::vehicle_class_name(vehicle_params.vehicle_class),
+                vertical_aid_mode_name(estimation_profile.vertical_aid),
+                medium_velocity_kind_name(estimation_profile.medium_velocity_kind),
+                estimation_profile.estimate_medium_velocity ? "ON" : "OFF");
+    SensorAdapter::Params sensor_params(estimation_profile, accel_mode);
     sensor_params.gps_origin_lat_deg = cfg.gps_origin_lat_deg;
     sensor_params.gps_origin_lon_deg = cfg.gps_origin_lon_deg;
-    sensor_params.gps_origin_alt_m = cfg.gps_origin_alt_m;
+    sensor_params.gps_origin_altitude_msl_m = cfg.gps_origin_altitude_msl_m;
+    sensor_params.gps_geodetic_max_radius_m = cfg.gps_max_radius_m;
     SensorAdapter sensor_adapter(sensor_params);
     // Build the {controller, allocator} stack for this vehicle's archetype.
     // Slender-body torpedoes get the cascade + fin allocator; thruster ROVs get
     // the 6-DOF controller + thruster-matrix allocator. main loop talks only the
     // IController/IAllocator interfaces below.
-    ControlStack stack = build_control_stack(vehicle_params);
-    IController &gnc = *stack.controller;
-    IAllocator &alloc = *stack.allocator;
-    MotorModel motor{vehicle_params.motor}; // fin/prop power model; thruster vehicles feed rpm=0
-    EnergyModel energy;
+    ControlStack stack = use_vehicle_bundle
+                             ? build_control_stack(vehicle_bundle)
+                             : build_control_stack(vehicle_params);
+#ifdef HYDROX_ENABLE_RESIDUAL_RL
+    // A deployment supplies a model-backed IResidualPolicy and explicit per-axis
+    // limits before learned residual authority is enabled.
+    ResidualAugmentor residual_augmentor;
+#endif
 
-    GNCSetpoint sp;
-    sp.depth_ref = cfg.init_depth;
-    sp.heading_ref = cfg.init_heading;
-    sp.surge_ref = cfg.init_surge;
-    GNCMode cur_mode = sitl::gnc_mode_from_string(initial_mode);
-    MissionState mission_state = (cur_mode == GNCMode::DISABLED)
-                                     ? MissionState::IDLE
-                                     : MissionState::RUNNING;
-    bool have_external_setpoint = false;
-    bool reset_controller_on_setpoint = false;
-    sitl::UeControlSessionGate ue_control_session;
-    gnc.set_mode(cur_mode);
-    gnc.set_setpoint(sp);
+    const GNCMode startup_mode = sitl::gnc_mode_from_string(initial_mode);
+    runtime::HilRuntimeConfig runtime_config;
+    runtime_config.estimation_profile = estimation_profile;
+    runtime_config.initial_state.eta[0] = cfg.init_n;
+    runtime_config.initial_state.eta[1] = cfg.init_e;
+    runtime_config.initial_state.eta[2] = cfg.init_depth;
+    runtime_config.initial_state.eta[5] = cfg.init_heading;
+    if (startup_mode != GNCMode::DISABLED)
+        runtime_config.initial_state.nu[0] = cfg.init_surge;
+    runtime_config.initial_state.depth_m = cfg.init_depth;
+    runtime_config.initial_setpoint.depth_ref = cfg.init_depth;
+    runtime_config.initial_setpoint.heading_ref = cfg.init_heading;
+    runtime_config.initial_setpoint.surge_ref = cfg.init_surge;
+    runtime_config.motor = vehicle_params.motor;
+    runtime_config.control_feedback_source = cfg.control_feedback_source;
+    runtime_config.allow_truth_heading_aid = cfg.allow_truth_heading_aid;
+    runtime_config.nominal_dt_s =
+        1.0 / static_cast<double>(effective_rate_hz);
+    runtime_config.mission_radius_m = cfg.mission_radius;
+    runtime_config.setpoint_timeout_us =
+        runtime::duration_us_from_seconds(cfg.mission_timeout_s);
 
-    const auto enter_safe_control_state = [&](const char *reason)
+    runtime::HilRuntime flight_runtime(
+        runtime_config,
+        std::move(stack.controller),
+        std::move(stack.allocator)
+#ifdef HYDROX_ENABLE_RESIDUAL_RL
+            ,
+        &residual_augmentor
+#endif
+    );
+    if (!flight_runtime.valid())
     {
-        const bool state_changed =
-            have_external_setpoint || cur_mode != GNCMode::DISABLED ||
-            sp.surge_ref != 0.0 || sp.use_yaw_rate_ref || sp.yaw_rate_ref != 0.0;
-        have_external_setpoint = false;
-        cur_mode = GNCMode::DISABLED;
-        mission_state = MissionState::IDLE;
-        sp.surge_ref = 0.0;
-        sp.use_yaw_rate_ref = false;
-        sp.yaw_rate_ref = 0.0;
-        gnc.set_mode(cur_mode);
-        gnc.set_setpoint(sp);
-        reset_controller_on_setpoint = true;
-        if (state_changed)
-            std::fprintf(stderr, "[FC] %s; control set to DISABLED\n", reason);
-    };
-
+        std::fprintf(stderr, "[FC] FATAL: invalid controller/allocation stack\n");
+        return 2;
+    }
 #ifdef HYDROX_DDS_ENABLED
     // Micro XRCE-DDS is isolated from the real-time control loop. The worker
     // owns all network/session calls; this thread only uses non-blocking
     // latest-value mailboxes.
-    sitl::DdsWorker dds_worker({
-        cfg.dds_host,
-        cfg.dds_port,
-        cfg.ros_domain_id,
-        cfg.vehicle,
-        static_cast<uint32_t>(cfg.ue5_port),
-        cfg.publish_truth_state,
-    });
+    sitl::DdsWorker dds_worker(
+        {
+            cfg.dds_host,
+            cfg.dds_port,
+            cfg.ros_domain_id,
+            cfg.vehicle,
+            static_cast<uint32_t>(cfg.ue5_port),
+            cfg.publish_truth_state,
+        },
+        monotonic_clock);
     uint64_t last_dds_setpoint_sequence = 0;
     uint64_t last_dds_status_sequence = 0;
     sitl::DdsControlLinkState dds_control_link;
 
-    const auto apply_dds_setpoint = [&](const hydrox::GNCSetpointDds &isp)
+    const auto setpoint_from_dds = [](const hydrox::GNCSetpointDds &isp)
     {
+        GNCSetpoint sp;
         sp.depth_ref = isp.depth_ref;
         sp.heading_ref = isp.heading_ref;
         sp.surge_ref = isp.surge_ref;
@@ -286,26 +342,14 @@ int main(int argc, char *argv[])
         sp.wp_n = isp.wp_n;
         sp.wp_e = isp.wp_e;
         sp.wp_d = isp.wp_d;
-        const GNCMode prev_mode = cur_mode;
-        cur_mode = static_cast<GNCMode>(isp.mode);
-        have_external_setpoint = true;
-        mission_state = (cur_mode == GNCMode::DISABLED)
-                            ? MissionState::IDLE
-                            : MissionState::RUNNING;
-        if (cur_mode != GNCMode::DISABLED && prev_mode != cur_mode)
-            reset_controller_on_setpoint = true;
-        gnc.set_mode(cur_mode);
-        gnc.set_setpoint(sp);
+        return sp;
     };
 
-    const auto revoke_dds_setpoint = [&](std::chrono::steady_clock::time_point now,
+    const auto revoke_dds_setpoint = [&](platform::MonotonicTimeUs now_us,
                                          const char *reason)
     {
-        if (!have_external_setpoint)
-            return;
-
-        ue_control_session.revoke_setpoint(now);
-        enter_safe_control_state(reason);
+        (void)flight_runtime.revoke_setpoint(now_us);
+        std::fprintf(stderr, "[FC] %s; control set to DISABLED\n", reason);
     };
 #endif
 
@@ -315,9 +359,7 @@ int main(int argc, char *argv[])
         std::printf("[FC] QGC UDP ready → %s:%d\n",
                     cfg.qgc_host.c_str(), cfg.qgc_port);
 
-    const auto period = std::chrono::microseconds(1'000'000 / effective_rate_hz);
     const double expected_dt = 1.0 / static_cast<double>(effective_rate_hz);
-    const bool use_hil_time = cfg.time_mode == "hil";
     xlog_recorder.start_session_clock();
 
     // ── Disconnect Reconnection Outer Loop ────────────────────────────────────────────────────
@@ -328,14 +370,15 @@ int main(int argc, char *argv[])
         if (!transport.connect())
         {
             std::printf("[FC] Connection failed, retrying in 1s\n");
-            std::this_thread::sleep_for(1s);
+            monotonic_sleeper.sleep_for_us(1'000'000);
             continue;
         }
-        const auto ue_connected_at = std::chrono::steady_clock::now();
+        const auto ue_connected_at_us = monotonic_clock.now_us();
         const uint64_t ue_session_generation =
-            ue_control_session.on_connected(ue_connected_at);
-        std::printf("[FC] Connected! GNC loop @%dHz time_mode=%s\n",
-                    cfg.rate_hz, use_hil_time ? "hil" : "wall");
+            flight_runtime.on_connected(ue_connected_at_us);
+        std::printf(
+            "[FC] Connected! timestamp-driven GNC loop nominal=%dHz\n",
+            cfg.rate_hz);
         std::printf("[FC] UE control session=%llu waiting for a valid HIL_SENSOR\n",
                     static_cast<unsigned long long>(ue_session_generation));
         if (qgc_sender.is_open())
@@ -345,93 +388,144 @@ int main(int argc, char *argv[])
             qgc_sender.send(packet.data(), packet.size());
         }
 
-        AUVState init_state = AUVState::zeros();
-        init_state.eta[0] = cfg.init_n;
-        init_state.eta[1] = cfg.init_e;
-        init_state.eta[2] = cfg.init_depth;
-        init_state.eta[5] = cfg.init_heading;
-        if (cur_mode != GNCMode::DISABLED)
-            init_state.nu[0] = cfg.init_surge;
-        init_state.depth_m = cfg.init_depth;
-        ekf.reset(init_state);
-        gnc.reset(init_state);
-        motor.reset();
-        energy.reset();
         sensor_adapter.reset();
 
-        uint32_t tick = 0;
-        bool ekf_init = false;
         bool gps_valid = false;
         HilGpsMsg last_gps{};
         HilDvlMsg last_dvl{};
-        AUVState state = AUVState::zeros();
-        ActuatorCmd cmd{};
+        bool startup_setpoint_pending =
+            cfg.parent_pid == 0 && startup_mode != GNCMode::DISABLED;
 
-        auto t_prev = std::chrono::steady_clock::now();
-        auto t_last_status = t_prev;
-        auto t_last_heartbeat = t_prev;
-        auto t_last_imu = t_prev;
-        auto t_last_no_imu_warning = t_prev - 2s;
-        uint64_t prev_imu_time_us = 0;
+        auto t_last_status = std::chrono::steady_clock::now();
+        auto t_last_heartbeat = t_last_status;
+        auto t_last_imu = t_last_status;
+        auto t_last_no_imu_warning = t_last_status - 2s;
+        std::deque<NavigationInput> pending_control_inputs;
+        uint64_t last_queued_imu_time_us = 0;
         uint32_t total_bytes_without_imu = 0;
         bool simulator_paused = false;
 
         // ── 100Hz GNC Inner Loop ──────────────────────────────────────────────
         while (g_running && parent_guard.is_parent_alive() && transport.is_connected())
         {
-            const auto t_now = std::chrono::steady_clock::now();
-            const double wall_dt = std::chrono::duration<double>(t_now - t_prev).count();
-            t_prev = t_now;
-            ++tick;
-
             // ── Read UE5 HIL data ─────────────────────────────────────────
-            uint8_t buf[1024];
-            const int n = transport.read(buf, sizeof(buf));
-            sensor_adapter.begin_cycle();
-
-            if (n > 0)
+            int n = 0;
+            if (pending_control_inputs.empty())
             {
-                for (const auto &f : codec.feed(buf, static_cast<size_t>(n)))
+                const int wait_result = transport.wait_readable(10);
+                if (wait_result < 0)
+                    break;
+
+                uint8_t buf[1024];
+                n = transport.read(buf, sizeof(buf));
+
+                if (n > 0)
                 {
-                    if (f.msg_id == MSGID_HEARTBEAT)
+                    for (const auto &f : codec.feed(buf, static_cast<size_t>(n)))
                     {
-                        const HeartbeatMsg heartbeat = codec.parse_heartbeat(f);
-                        if (heartbeat.valid)
+                        if (f.msg_id == MSGID_HEARTBEAT)
                         {
-                            const bool next_paused =
-                                heartbeat.system_status == MAV_STATE_STANDBY;
-                            if (next_paused != simulator_paused)
+                            const HeartbeatMsg heartbeat = codec.parse_heartbeat(f);
+                            if (heartbeat.valid)
                             {
-                                simulator_paused = next_paused;
-                                std::printf(
-                                    "[FC:%d] simulator control chain %s\n",
-                                    cfg.ue5_port,
-                                    simulator_paused ? "paused" : "resuming");
+                                const bool next_paused =
+                                    heartbeat.system_status == MAV_STATE_STANDBY;
+                                if (next_paused != simulator_paused)
+                                {
+                                    simulator_paused = next_paused;
+                                    std::printf(
+                                        "[FC:%d] simulator control chain %s\n",
+                                        cfg.ue5_port,
+                                        simulator_paused ? "paused" : "resuming");
+                                }
                             }
                         }
+
+                        sensor_adapter.ingest_frame(f, codec);
+                        if (f.msg_id == MSGID_HIL_SENSOR)
+                        {
+                            NavigationInput input = sensor_adapter.build();
+                            const uint64_t timestamp_us = input.imu.time_usec;
+                            if (input.got_imu && timestamp_us > last_queued_imu_time_us)
+                            {
+                                pending_control_inputs.push_back(std::move(input));
+                                last_queued_imu_time_us = timestamp_us;
+                            }
+                            else if (timestamp_us > 0)
+                            {
+                                std::fprintf(
+                                    stderr,
+                                    "[FC:%d] rejected non-increasing sensor timestamp current=%llu previous=%llu\n",
+                                    cfg.ue5_port,
+                                    static_cast<unsigned long long>(timestamp_us),
+                                    static_cast<unsigned long long>(last_queued_imu_time_us));
+                            }
+
+                            // An IMU sample closes one control input epoch.
+                            // Auxiliary frames that follow belong to the next
+                            // timestamped control input.
+                            sensor_adapter.begin_cycle();
+                        }
                     }
-                    sensor_adapter.ingest_frame(f, codec);
+                }
+                else if (n < 0)
+                {
+                    break;
                 }
             }
-            else if (n < 0)
+
+            NavigationInput nav;
+            if (!pending_control_inputs.empty())
             {
-                break;
+                nav = std::move(pending_control_inputs.front());
+                pending_control_inputs.pop_front();
+            }
+            else
+            {
+                nav = sensor_adapter.build();
             }
 
-            const NavigationInput nav = sensor_adapter.build();
+            const auto t_now = std::chrono::steady_clock::now();
+            const auto monotonic_now_us = monotonic_clock.now_us();
             gps_valid = nav.gps_valid;
             last_gps = nav.last_gps;
             last_dvl = nav.last_dvl;
+
+            // Evaluate wall-clock loss before a newly arrived sample refreshes
+            // the sensor timestamp. A late packet cannot erase an outage.
+            const runtime::RuntimeEvent maintenance_event =
+                flight_runtime.maintain(monotonic_now_us);
+            if (maintenance_event != runtime::RuntimeEvent::NONE)
+            {
+                std::fprintf(
+                    stderr,
+                    "[FC] %s; control set to DISABLED\n",
+                    runtime::runtime_event_name(maintenance_event));
+            }
 
             // A new simulator byte stream is a new state epoch. Only a real
             // timestamped IMU sample opens the gate for post-reconnect commands;
             // the default value produced by a malformed short packet cannot.
             if (nav.got_imu && nav.imu.time_usec > 0 &&
-                ue_control_session.observe_valid_sensor(t_now))
+                flight_runtime.observe_valid_sensor(monotonic_now_us) ==
+                    runtime::RuntimeEvent::SENSOR_READY)
             {
                 std::printf(
                     "[FC] UE control session=%llu sensor-ready; waiting for a fresh Setpoint\n",
                     static_cast<unsigned long long>(ue_session_generation));
+                if (startup_setpoint_pending)
+                {
+                    startup_setpoint_pending = false;
+                    if (flight_runtime.accept_setpoint(
+                            runtime_config.initial_setpoint,
+                            startup_mode,
+                            monotonic_now_us))
+                    {
+                        std::printf(
+                            "[FC] standalone startup Setpoint accepted for mode=%s\n",
+                            sitl::gnc_mode_name(startup_mode));
+                    }
+                }
             }
 
             // TCP liveness must not depend on receiving IMU samples. During an
@@ -454,7 +548,8 @@ int main(int argc, char *argv[])
                     last_dds_status_sequence, dds_status))
             {
                 if (dds_control_link.observe(dds_status))
-                    revoke_dds_setpoint(t_now, "DDS connection lost");
+                    revoke_dds_setpoint(
+                        monotonic_now_us, "DDS connection lost");
             }
 
             // Setpoints are stamped with the XRCE session generation. A stale
@@ -474,8 +569,11 @@ int main(int argc, char *argv[])
                         static_cast<unsigned long long>(
                             dds_control_link.session_generation()));
                 }
-                else if (!ue_control_session.accept_setpoint(
-                             incoming_setpoint.received_at))
+                else if (!flight_runtime.accept_setpoint(
+                             setpoint_from_dds(incoming_setpoint.setpoint),
+                             static_cast<GNCMode>(
+                                 incoming_setpoint.setpoint.mode),
+                             incoming_setpoint.received_at_us))
                 {
                     std::fprintf(
                         stderr,
@@ -485,35 +583,18 @@ int main(int argc, char *argv[])
                             incoming_setpoint.session_generation),
                         static_cast<unsigned long long>(
                             ue_session_generation),
-                        sitl::ue_control_session_phase_name(
-                            ue_control_session.phase()));
-                }
-                else
-                {
-                    apply_dds_setpoint(incoming_setpoint.setpoint);
+                        runtime::control_session_phase_name(
+                            flight_runtime.control_session().phase()));
                 }
             }
 #endif
-
-            // Command freshness is wall/steady-clock based and remains active
-            // while simulation time is paused or no IMU sample is arriving.
-            if (have_external_setpoint &&
-                ue_control_session.setpoint_timed_out(
-                    t_now, std::chrono::duration<double>(cfg.mission_timeout_s)))
-            {
-                ue_control_session.revoke_setpoint(t_now);
-                enter_safe_control_state("external Setpoint timed out");
-            }
 
             if (simulator_paused)
             {
                 t_last_imu = t_now;
                 t_last_no_imu_warning = t_now - 2s;
                 total_bytes_without_imu = 0;
-                auto pause_sleep = period;
-                pause_sleep = std::max(pause_sleep, std::chrono::microseconds(1000));
-                pause_sleep = std::min(pause_sleep, std::chrono::microseconds(20000));
-                std::this_thread::sleep_for(pause_sleep);
+                pending_control_inputs.clear();
                 continue;
             }
 
@@ -534,15 +615,6 @@ int main(int argc, char *argv[])
                     t_last_no_imu_warning = t_now;
                     total_bytes_without_imu = 0;
                 }
-                if (use_hil_time)
-                {
-                    auto no_imu_sleep = period;
-                    no_imu_sleep = std::max(no_imu_sleep, std::chrono::microseconds(1000));
-                    no_imu_sleep = std::min(no_imu_sleep, std::chrono::microseconds(20000));
-                    std::this_thread::sleep_for(no_imu_sleep);
-                }
-                else
-                    std::this_thread::sleep_until(t_prev + period);
                 continue;
             }
 
@@ -550,90 +622,57 @@ int main(int argc, char *argv[])
             t_last_no_imu_warning = t_now - 2s;
             total_bytes_without_imu = 0;
 
-            double dt = wall_dt;
-            if (use_hil_time)
+            const runtime::StepStatus step_status =
+                flight_runtime.step(nav, monotonic_now_us);
+            if (step_status != runtime::StepStatus::OK)
             {
-                if (prev_imu_time_us > 0 && nav.imu.time_usec > prev_imu_time_us)
-                    dt = static_cast<double>(nav.imu.time_usec - prev_imu_time_us) * 1e-6;
-                else
-                    dt = expected_dt;
-
-                prev_imu_time_us = nav.imu.time_usec;
-                dt = std::clamp(dt, expected_dt * 0.1, expected_dt * 10.0);
-            }
-            // ── EKF Update ──────────────────────────────────────────────────
-            // Specific force (body frame, m/s²). Only enabled when UE marks all three axes XACC|YACC|ZACC as valid,
-            // otherwise have_accel=false -> predict degrades to kinematics (zero regression for legacy UE).
-            NavigationMeasurements nav_meas = nav.measurements;
-            if (!cfg.allow_truth_heading_aid)
-                nav_meas.truth_heading_debug.meta.valid = false;
-            // DVL stays available to the EKF while recent, but the EKF consumes
-            // each HIL timestamp only once. This avoids falsely shrinking its
-            // covariance by reusing one 5 Hz frame on every 100 Hz IMU tick.
-            state = ekf.update(
-                nav_meas,
-                nav.dvl,
-                nav.water_dvl,
-                nav.gps,
-                dt);
-            state.dvl_valid = nav.dvl_recent;
-            ekf_init = true;
-
-            // ── GNC Update + Actuator Output ─────────────────────────────────────
-            if (reset_controller_on_setpoint)
-            {
-                gnc.reset(state);
-                reset_controller_on_setpoint = false;
+                std::fprintf(
+                    stderr,
+                    "[FC:%d] common runtime rejected sensor tick: %s\n",
+                    cfg.ue5_port,
+                    runtime::step_status_name(step_status));
+                continue;
             }
 
-            // Controller generates generalized force tau -> allocator maps to normalized actuator channels (clamp+normalize inside allocator)
-            const Wrench tau = gnc.update(state, dt);
-            cmd = alloc.allocate(tau, state.surge());
+            // Everything below consumes one immutable result from the common
+            // SITL/HITL estimator -> GNC -> allocator -> safety pipeline.
+            const runtime::HilRuntimeTick &runtime_tick =
+                flight_runtime.last_tick();
+            const NavigationState &state = runtime_tick.estimated_state;
+            const NavigationState &control_state = runtime_tick.control_state;
+            const Wrench &tau = runtime_tick.wrench;
+            const ActuatorCmd &cmd = runtime_tick.actuator;
             const auto &norm = cmd.ch;
-            constexpr uint8_t MAV_MODE_FLAG_HIL_ENABLED = 32;
-            constexpr uint8_t MAV_MODE_FLAG_SAFETY_ARMED = 128;
-            const uint8_t actuator_mode =
-                static_cast<uint8_t>(MAV_MODE_FLAG_HIL_ENABLED |
-                                     (cur_mode != GNCMode::DISABLED ? MAV_MODE_FLAG_SAFETY_ARMED : 0));
-            if (cur_mode != GNCMode::DISABLED)
-            {
-                const auto act_pkt = codec.encode_hil_actuator_controls(
-                    norm, static_cast<uint64_t>(nav.imu.time_usec), actuator_mode, 0);
-                transport.write(act_pkt.data(), act_pkt.size());
-            }
+            const MotorState &ms = runtime_tick.motor;
+            const EnergyState &es = runtime_tick.energy;
+            const GNCSetpoint &sp = flight_runtime.setpoint();
+            const GNCMode cur_mode = runtime_tick.mode;
+            const runtime::MissionState mission_state =
+                runtime_tick.mission_state;
+            const uint32_t tick = runtime_tick.tick;
+            const bool ekf_init = runtime_tick.ekf_initialized;
+            const bool have_external_setpoint =
+                runtime_tick.have_external_setpoint;
+            const double waypoint_distance_m =
+                runtime_tick.waypoint_distance_m;
+            const double dt = runtime_tick.dt;
 
-            // ── Motor Model (First-order lag + power calculation) ─────────────────────────
-            const MotorState ms = motor.step(cmd.rpm, dt);
-
-            // ── Energy Model (Battery SOC + runtime estimation) ──────────────────────────
-            const EnergyState es = energy.update(ms.power_W, dt);
-
-            // ── Mission State ────────────────────────────────────────────────
-            double waypoint_distance_m = -1.0;
-            if (cur_mode == GNCMode::WAYPOINT_3D)
-            {
-                const double dn = state.eta[0] - sp.wp_n;
-                const double de = state.eta[1] - sp.wp_e;
-                const double dd = state.eta[2] - sp.wp_d;
-                waypoint_distance_m = std::sqrt(dn * dn + de * de + dd * dd);
-            }
-
-            if (cur_mode == GNCMode::DISABLED)
-                mission_state = MissionState::IDLE;
-            else if (mission_state == MissionState::IDLE)
-                mission_state = MissionState::RUNNING;
-            else if (mission_state == MissionState::RUNNING &&
-                     waypoint_distance_m >= 0.0 &&
-                     waypoint_distance_m <= cfg.mission_radius)
-                mission_state = MissionState::COMPLETE;
+            // Send an explicit zero/unarmed frame in safe states. This removes
+            // ambiguity at both the simulator and the hardware HIL router.
+            const auto act_pkt = codec.encode_hil_actuator_controls(
+                norm,
+                runtime_tick.sensor_time_us,
+                runtime_tick.actuator_mode,
+                0);
+            transport.write(act_pkt.data(), act_pkt.size());
 
             sitl::XLogTickData xlog_tick;
-            xlog_tick.state = &state;
+            xlog_tick.state = &control_state;
             xlog_tick.setpoint = &sp;
             xlog_tick.wrench = &tau;
             xlog_tick.actuator = &cmd;
             xlog_tick.navigation = &nav;
-            xlog_tick.ekf = &ekf;
+            xlog_tick.ekf = &flight_runtime.ekf();
             xlog_tick.tick = tick;
             xlog_tick.gnc_mode = cur_mode;
             xlog_tick.mission_state = static_cast<uint8_t>(mission_state);
@@ -641,7 +680,7 @@ int main(int argc, char *argv[])
             xlog_tick.ekf_initialized = ekf_init;
             xlog_tick.have_external_setpoint = have_external_setpoint;
             xlog_tick.setpoint_age_s =
-                ue_control_session.setpoint_age_s(t_now);
+                runtime_tick.setpoint_age_s;
             xlog_tick.waypoint_distance_m = waypoint_distance_m;
             xlog_tick.dt = dt;
             xlog_tick.expected_dt = expected_dt;
@@ -657,8 +696,8 @@ int main(int argc, char *argv[])
             {
                 t_last_status = t_now;
                 constexpr double kMsToKn = 1.0 / 0.514444;
-                const double surge_kn = state.nu[0] * kMsToKn;
-                const double gs_ms = std::sqrt(state.nu[0]*state.nu[0] + state.nu[1]*state.nu[1]);
+                const double surge_kn = control_state.nu[0] * kMsToKn;
+                const double gs_ms = std::sqrt(control_state.nu[0]*control_state.nu[0] + control_state.nu[1]*control_state.nu[1]);
                 const double gs_kn = gs_ms * kMsToKn;
                 const std::string runtime_suffix =
                     es.runtime_rem_s > 0.0
@@ -669,16 +708,16 @@ int main(int argc, char *argv[])
                         : std::string{};
                 std::printf("[FC:%d] depth=%.2fm hdg=%.1fdeg "
                             "surge=%.2fm/s(%.1fkn) gs=%.2fm/s(%.1fkn) pqr=(%.2f,%.2f,%.2f) "
-                            "tau=(X%.1f M%.1f N%.1f) act=(%.2f %.2f %.2f %.2f T%.2f) dvl=%s accel=%s "
+                            "tau=(X%.1f M%.1f N%.1f) act=(%.2f %.2f %.2f %.2f T%.2f) dvl=%s accel=%s feedback=%s "
                             "| rpm=%.0f T=%.1fN P=%.1fW SOC=%.1f%%%s\n",
                             cfg.ue5_port,
-                            state.depth_m,
-                            state.eta[5] * 180.0 / 3.14159265358979,
-                            state.nu[0], surge_kn,
+                            control_state.depth_m,
+                            control_state.eta[5] * 180.0 / 3.14159265358979,
+                            control_state.nu[0], surge_kn,
                             gs_ms, gs_kn,
-                            state.nu[3],
-                            state.nu[4],
-                            state.nu[5],
+                            control_state.nu[3],
+                            control_state.nu[4],
+                            control_state.nu[5],
                             tau[0],
                             tau[4],
                             tau[5],
@@ -689,6 +728,7 @@ int main(int argc, char *argv[])
                             norm[4],
                             nav.dvl_recent ? "BT" : (nav.water_dvl_recent ? "WT" : "--"),
                             nav.have_accel ? "ON" : "--",
+                            runtime_tick.used_truth ? "TRUTH_DEBUG" : "EKF",
                             ms.rpm_actual,
                             ms.thrust_N,
                             es.power_total_W,
@@ -704,13 +744,13 @@ int main(int argc, char *argv[])
                 fs.timestamp_us = nav.imu.time_usec;
                 for (int i = 0; i < 6; ++i)
                 {
-                    fs.eta[i] = state.eta[i];
-                    fs.nu[i] = state.nu[i];
+                    fs.eta[i] = control_state.eta[i];
+                    fs.nu[i] = control_state.nu[i];
                     fs.truth_eta[i] = nav.truth.eta[i];
                     fs.truth_nu[i] = nav.truth.nu[i];
                 }
-                fs.depth_m = state.depth_m;
-                fs.dvl_valid = state.dvl_valid ? 1u : 0u;
+                fs.depth_m = control_state.depth_m;
+                fs.dvl_valid = control_state.dvl_valid ? 1u : 0u;
                 fs.truth_valid = nav.truth_valid ? 1u : 0u;
                 fs.acc[0] = nav.imu.xacc;
                 fs.acc[1] = nav.imu.yacc;
@@ -744,7 +784,7 @@ int main(int argc, char *argv[])
                 fs.thrust = norm[4];
                 fs.rpm = static_cast<float>(cmd.rpm);
                 std::snprintf(fs.mission_state, sizeof(fs.mission_state),
-                               "%s", mission_state_name(mission_state));
+                               "%s", runtime::mission_state_name(mission_state));
                 // Motor model outputs.
                 fs.motor_rpm_actual = static_cast<float>(ms.rpm_actual);
                 fs.motor_thrust_N = static_cast<float>(ms.thrust_N);
@@ -757,25 +797,14 @@ int main(int argc, char *argv[])
                 fs.V_terminal = static_cast<float>(es.V_terminal);
                 fs.runtime_rem_s = static_cast<float>(es.runtime_rem_s > 0 ? es.runtime_rem_s : 0.0);
 
-                // Fill nav_msgs/Odometry covariance from the EKF covariance matrix.
-                const auto &P = ekf.covariance();
-                for (int r = 0; r < 6; ++r)
-                {
-                    for (int c = 0; c < 6; ++c)
-                    {
-                        fs.pose_cov[r * 6 + c] = P(r, c);
-                    }
-                }
-                for (int r = 0; r < 3; ++r)
-                {
-                    for (int c = 0; c < 3; ++c)
-                    {
-                        fs.twist_cov[r * 6 + c] = P(6 + r, 6 + c);
-                    }
-                }
-                fs.twist_cov[3 * 6 + 3] = 0.01;
-                fs.twist_cov[4 * 6 + 4] = 0.01;
-                fs.twist_cov[5 * 6 + 5] = 0.01;
+                // Encode map_ned pose and BodyFRD twist covariance under the
+                // shared nav_msgs/Odometry contract.
+                const auto &P = flight_runtime.ekf().covariance();
+                fs.odometry_covariance_valid =
+                    odometry_contract::encode_covariances(
+                        P, fs.pose_cov, fs.twist_cov)
+                        ? 1u
+                        : 0u;
 
                 const char *mode_str = sitl::gnc_mode_name(cur_mode);
                 dds_sample.gnc_mode = mode_str;
@@ -860,16 +889,10 @@ int main(int argc, char *argv[])
                 qgc_sender.send(pkt.data(), static_cast<int>(pkt.size()));
             }
 
-            if (use_hil_time)
-                std::this_thread::sleep_for(1ms);
-            else
-                std::this_thread::sleep_until(t_prev + period);
         }
 
         // ── Disconnect Handling ──────────────────────────────────────────────────────
-        const auto ue_disconnected_at = std::chrono::steady_clock::now();
-        ue_control_session.on_disconnected(ue_disconnected_at);
-        enter_safe_control_state("UE connection lost");
+        (void)flight_runtime.on_disconnected(monotonic_clock.now_us());
         transport.disconnect();
         if (!parent_guard.is_parent_alive())
         {

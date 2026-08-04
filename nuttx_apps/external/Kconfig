@@ -1,0 +1,25 @@
+menu "OceanX / HydroX applications"
+
+config HYDROX_HITL
+	bool "HydroX FMUv6C HITL firmware"
+	default n
+	help
+		Build the HITL-only HydroX supervisor for the common Holybro FMUv6C
+		firmware target used by Pixhawk 6C and Pixhawk 6C Mini. Physical PWM,
+		DShot, CAN actuator and PX4IO output drivers are intentionally absent.
+
+if HYDROX_HITL
+
+config HYDROX_HITL_PRIORITY
+	int "HydroX supervisor task priority"
+	default 180
+	range 1 255
+
+config HYDROX_HITL_STACKSIZE
+	int "HydroX supervisor task stack size"
+	default 16384
+	range 8192 65536
+
+endif
+
+endmenu

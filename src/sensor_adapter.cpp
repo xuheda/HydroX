@@ -1,4 +1,5 @@
 // Copyright (c) 2026 OceanX. Author: xuheda
+#include "geodesy.h"
 #include "sensor_adapter.h"
 
 #include <algorithm>
@@ -25,8 +26,6 @@ namespace hydrox
             kHilFieldXmag | kHilFieldYmag | kHilFieldZmag;
         constexpr uint32_t kHilFieldAbsPressure = 1u << 9;
         constexpr uint16_t kGpsUnknownU16 = 0xFFFFu;
-        constexpr double kPi = 3.14159265358979323846;
-        constexpr double kWgs84EarthRadiusM = 6378137.0;
 
         bool finite3(const Eigen::Vector3d &v)
         {
@@ -73,23 +72,35 @@ namespace hydrox
             return std::clamp(variance, min_variance, max_variance);
         }
 
-        Eigen::Vector3d geodetic_to_local_ned(
+        bool geodetic_to_local_ned(
             int32_t lat_e7,
             int32_t lon_e7,
             int32_t alt_mm,
-            const SensorAdapter::Params &p)
+            const SensorAdapter::Params &p,
+            Eigen::Vector3d &out_position_ned)
         {
-            const double lat_deg = static_cast<double>(lat_e7) * 1e-7;
-            const double lon_deg = static_cast<double>(lon_e7) * 1e-7;
-            const double alt_m = static_cast<double>(alt_mm) * 0.001;
-            const double origin_lat_rad = p.gps_origin_lat_deg * kPi / 180.0;
-            const double cos_lat = std::max(1.0e-6, std::abs(std::cos(origin_lat_rad)));
-            const double north =
-                (lat_deg - p.gps_origin_lat_deg) * kPi / 180.0 * kWgs84EarthRadiusM;
-            const double east =
-                (lon_deg - p.gps_origin_lon_deg) * kPi / 180.0 * kWgs84EarthRadiusM * cos_lat;
-            const double down = p.gps_origin_alt_m - alt_m;
-            return Eigen::Vector3d(north, east, down);
+            const geodesy::Wgs84AeqdFrame frame{
+                p.gps_origin_lat_deg,
+                p.gps_origin_lon_deg,
+                p.gps_origin_altitude_msl_m,
+                p.gps_geodetic_max_radius_m};
+            double north_m = 0.0;
+            double east_m = 0.0;
+            double down_m = 0.0;
+            if (!geodesy::geodetic_to_local_ned(
+                    frame,
+                    static_cast<double>(lat_e7) * 1e-7,
+                    static_cast<double>(lon_e7) * 1e-7,
+                    static_cast<double>(alt_mm) * 0.001,
+                    north_m,
+                    east_m,
+                    down_m))
+            {
+                return false;
+            }
+
+            out_position_ned = Eigen::Vector3d(north_m, east_m, down_m);
+            return true;
         }
     } // namespace
 
@@ -226,7 +237,10 @@ namespace hydrox
             finite3(out.mag_body) &&
             out.mag_body.norm() >= 1.0 &&
             out.mag_body.norm() <= 1000.0;
-        out.have_mag = mag_fields_ok && mag_values_ok;
+        out.have_mag =
+            _p.estimation_profile.fuse_magnetometer &&
+            mag_fields_ok &&
+            mag_values_ok;
         out.measurements.mag_body.value = out.mag_body;
         out.measurements.mag_body.covariance =
             Eigen::Matrix3d::Identity() * _p.mag_variance;
@@ -241,9 +255,13 @@ namespace hydrox
             dvl_age_s >= 0.0 &&
             dvl_age_s <= _p.dvl_timeout_s;
         const bool bottom_dvl_recent =
-            dvl_velocity_recent && _last_dvl.is_bottom_track();
+            _p.estimation_profile.fuse_bottom_track_dvl &&
+            dvl_velocity_recent &&
+            _last_dvl.is_bottom_track();
         const bool water_dvl_recent =
-            dvl_velocity_recent && _last_dvl.is_water_track();
+            _p.estimation_profile.fuse_relative_medium_velocity &&
+            dvl_velocity_recent &&
+            _last_dvl.is_water_track();
         out.dvl_age_s = dvl_age_s;
         out.dvl_altitude_valid = bottom_dvl_recent && _last_dvl.altitude_valid();
         if (out.dvl_altitude_valid)
@@ -295,37 +313,43 @@ namespace hydrox
         out.measurements.water_dvl_velocity_body.meta.source = NavMeasurementSource::Dvl;
         out.measurements.water_dvl_velocity_body.meta.frame = NavMeasurementFrame::BodyFRD;
 
+        Eigen::Vector3d gps_position_ned = Eigen::Vector3d::Zero();
+        const bool gps_projection_valid = geodetic_to_local_ned(
+            _last_gps.lat,
+            _last_gps.lon,
+            _last_gps.alt,
+            _p,
+            gps_position_ned);
         const bool gps_recent =
+            _p.estimation_profile.fuse_gps_position &&
             _gps_valid &&
+            gps_projection_valid &&
             gps_age_s >= 0.0 &&
             gps_age_s <= _p.gps_timeout_s;
         out.gps_valid = gps_recent;
-        if (_gps_new_this_cycle && _gps_valid)
+        if (_gps_new_this_cycle && gps_recent)
         {
             GPSMeasurement gm;
-            const Eigen::Vector3d gps_pos_ned =
-                geodetic_to_local_ned(_last_gps.lat, _last_gps.lon, _last_gps.alt, _p);
-            gm.pos_n = gps_pos_ned.x();
-            gm.pos_e = gps_pos_ned.y();
-            gm.pos_d = gps_pos_ned.z();
+            gm.pos_n = gps_position_ned.x();
+            gm.pos_e = gps_position_ned.y();
+            gm.pos_d = gps_position_ned.z();
             gm.vel_n = static_cast<double>(_last_gps.vn) * 0.01;
             gm.vel_e = static_cast<double>(_last_gps.ve) * 0.01;
             gm.vel_d = static_cast<double>(_last_gps.vd) * 0.01;
             // HIL_GPS uses UINT16_MAX as the unavailable ground-speed sentinel.
             // A measured zero is still valid and must not be treated as missing.
-            gm.has_velocity = _last_gps.vel != kGpsUnknownU16;
+            gm.has_velocity =
+                _p.estimation_profile.fuse_gps_velocity &&
+                _last_gps.vel != kGpsUnknownU16;
             gm.has_altitude =
-                _p.vehicle_class == VehicleClass::UAV_MULTIROTOR ||
-                _p.vehicle_class == VehicleClass::UAV_FIXED_WING ||
-                _p.vehicle_class == VehicleClass::UAV_VTOL;
+                _p.estimation_profile.vertical_aid ==
+                VerticalAidMode::GpsAltitude;
             gm.timestamp = static_cast<double>(_last_gps.time_usec) * 1e-6;
             out.gps = gm;
         }
-        const double gps_timestamp_s = static_cast<double>(_last_gps.time_usec) * 1e-6;
-        const Eigen::Vector3d gps_position_ned =
-            geodetic_to_local_ned(_last_gps.lat, _last_gps.lon, _last_gps.alt, _p);
-        out.measurements.gps_position_ned.value =
-            gps_position_ned;
+        const double gps_timestamp_s =
+            static_cast<double>(_last_gps.time_usec) * 1e-6;
+        out.measurements.gps_position_ned.value = gps_position_ned;
         const double gps_xy_variance = gps_accuracy_variance(
             _last_gps.eph,
             _p.gps_xy_variance,
@@ -349,34 +373,46 @@ namespace hydrox
         out.measurements.gps_velocity_ned.covariance =
             Eigen::Matrix3d::Identity() * _p.gps_velocity_variance;
         out.measurements.gps_velocity_ned.meta.valid =
-            gps_recent && _gps_new_this_cycle && _last_gps.vel != kGpsUnknownU16;
+            _p.estimation_profile.fuse_gps_velocity &&
+            gps_recent &&
+            _gps_new_this_cycle &&
+            _last_gps.vel != kGpsUnknownU16;
         out.measurements.gps_velocity_ned.meta.timestamp_s = gps_timestamp_s;
         out.measurements.gps_velocity_ned.meta.age_s = gps_age_s;
         out.measurements.gps_velocity_ned.meta.source = NavMeasurementSource::Gps;
         out.measurements.gps_velocity_ned.meta.frame = NavMeasurementFrame::WorldNED;
 
-        if (_p.vehicle_class == VehicleClass::UUV)
+        switch (_p.estimation_profile.vertical_aid)
         {
+        case VerticalAidMode::PressureDepth:
             out.depth_m = pressure_to_depth(_imu.abs_pressure);
-        }
-        else if (_p.vehicle_class == VehicleClass::USV)
-        {
-            out.depth_m = 0.0;
-        }
-        else
-        {
-            // Air vehicles should not receive a fake pressure depth update.
+            out.measurements.depth.variance = _p.depth_variance;
+            out.measurements.depth.meta.valid =
+                out.got_imu &&
+                ((_imu.fields_updated & kHilFieldAbsPressure) ==
+                 kHilFieldAbsPressure);
+            out.measurements.depth.meta.source = NavMeasurementSource::Depth;
+            break;
+        case VerticalAidMode::SurfaceConstraint:
+            out.depth_m = _p.estimation_profile.surface_depth_m;
+            out.measurements.depth.variance =
+                _p.estimation_profile.surface_constraint_variance;
+            out.measurements.depth.meta.valid = out.got_imu;
+            out.measurements.depth.meta.source =
+                NavMeasurementSource::SurfaceConstraint;
+            break;
+        case VerticalAidMode::GpsAltitude:
+        default:
+            // Air vehicles receive vertical position through GPS altitude.
             out.depth_m = std::nullopt;
+            out.measurements.depth.variance = _p.depth_variance;
+            out.measurements.depth.meta.valid = false;
+            out.measurements.depth.meta.source = NavMeasurementSource::None;
+            break;
         }
         out.measurements.depth.value = out.depth_m.value_or(0.0);
-        out.measurements.depth.variance = _p.depth_variance;
-        out.measurements.depth.meta.valid =
-            out.depth_m.has_value() &&
-            out.got_imu &&
-            ((_imu.fields_updated & kHilFieldAbsPressure) == kHilFieldAbsPressure);
         out.measurements.depth.meta.timestamp_s = imu_timestamp_s;
         out.measurements.depth.meta.age_s = out.got_imu ? 0.0 : -1.0;
-        out.measurements.depth.meta.source = NavMeasurementSource::Depth;
         out.measurements.depth.meta.frame = NavMeasurementFrame::Scalar;
 
         out.measurements.truth_heading_debug.value = _last_truth.eta[5];

@@ -12,8 +12,11 @@ namespace hydrox::sitl
 {
     using namespace std::chrono_literals;
 
-    DdsWorker::DdsWorker(DdsWorkerConfig config)
+    DdsWorker::DdsWorker(
+        DdsWorkerConfig config,
+        const platform::Clock &clock)
         : config_(std::move(config)),
+          clock_(clock),
           thread_(&DdsWorker::run, this)
     {
     }
@@ -115,10 +118,10 @@ namespace hydrox::sitl
                                 // Blocking is allowed on the DDS thread. The
                                 // GNC reader always uses try_lock.
                                  setpoint_mailbox_.publish(DdsSetpointSample{
-                                     setpoint,
-                                     callback_generation,
-                                     std::chrono::steady_clock::now(),
-                                 });
+                                 setpoint,
+                                 callback_generation,
+                                 clock_.now_us(),
+                             });
                             });
                         publisher = std::move(candidate);
                         publish_connection_status(

@@ -1,5 +1,5 @@
 #pragma once
-/** surge_p.h — Surge velocity P controller (ported from Python surge_p.py) */
+/** surge_p.h — Surge velocity P controller */
 #include <algorithm>
 #include <cmath>
 
