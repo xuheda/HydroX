@@ -33,6 +33,7 @@ namespace hydrox::sitl
         std::string gnc_mode = "DISABLED";
         bool hil_connected = false;
         bool ekf_initialized = false;
+        bool actuator_authorized = false;
         HilPassiveSonarBearingMsg passive_sonar{};
         HilAcousticNeighborsMsg acoustic_neighbors{};
         HilRangeFinderScanMsg rangefinder_scan{};

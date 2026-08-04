@@ -351,7 +351,9 @@ namespace
         assign_if_present(*controller, "max_pitch_command", out.max_pitch_command);
         auto &allocator = params.fixedwing_allocator;
         assign_if_present(*controller, "elevator_kp", allocator.elevator_kp);
+        assign_if_present(*controller, "elevator_kd", allocator.elevator_kd);
         assign_if_present(*controller, "aileron_kp", allocator.aileron_kp);
+        assign_if_present(*controller, "aileron_kd", allocator.aileron_kd);
         assign_if_present(*controller, "rudder_kp", allocator.rudder_kp);
         assign_if_present(*controller, "throttle_trim", allocator.throttle_trim);
         assign_if_present(*controller, "throttle_kp", allocator.throttle_kp);

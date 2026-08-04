@@ -242,6 +242,8 @@ uint8_t mav_type_for_vehicle_class(VehicleClass vehicle_class)
     {
     case VehicleClass::USV:
         return 11; // MAV_TYPE_SURFACE_BOAT
+    case VehicleClass::UGV_DIFFERENTIAL:
+        return 10; // MAV_TYPE_GROUND_ROVER
     case VehicleClass::UAV_MULTIROTOR:
         return 2; // MAV_TYPE_QUADROTOR
     case VehicleClass::UAV_FIXED_WING:
@@ -260,6 +262,8 @@ const char *vehicle_class_name(VehicleClass vehicle_class)
     {
     case VehicleClass::USV:
         return "USV";
+    case VehicleClass::UGV_DIFFERENTIAL:
+        return "UGV_DIFFERENTIAL";
     case VehicleClass::UAV_MULTIROTOR:
         return "UAV_MULTIROTOR";
     case VehicleClass::UAV_FIXED_WING:
@@ -280,6 +284,8 @@ const char *vehicle_archetype_name(VehicleArchetype archetype)
         return "Thruster";
     case VehicleArchetype::Surface:
         return "Surface";
+    case VehicleArchetype::DifferentialDrive:
+        return "DifferentialDrive";
     case VehicleArchetype::Multirotor:
         return "Multirotor";
     case VehicleArchetype::FixedWing:

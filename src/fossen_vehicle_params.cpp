@@ -302,6 +302,27 @@ namespace
         params.archetype_control_loaded_from_json = true;
     }
 
+    void apply_ground_control_overrides(const std::string &control,
+                                        FossenControlParams &params)
+    {
+        const auto tuning = object_for_key(control, "differential_drive");
+        if (!tuning)
+            return;
+        auto &p = params.ground_gnc;
+        if (auto v = number_for_key(*tuning, "surge_kp")) p.surge_kp = *v;
+        if (auto v = number_for_key(*tuning, "surge_ki")) p.surge_ki = *v;
+        if (auto v = number_for_key(*tuning, "surge_integral_limit")) p.surge_integral_limit = *v;
+        if (auto v = number_for_key(*tuning, "yaw_heading_kp")) p.yaw_heading_kp = *v;
+        if (auto v = number_for_key(*tuning, "yaw_rate_kp")) p.yaw_rate_kp = *v;
+        if (auto v = number_for_key(*tuning, "max_force_n")) p.max_force_N = *v;
+        if (auto v = number_for_key(*tuning, "max_moment_nm")) p.max_moment_Nm = *v;
+        if (auto v = number_for_key(*tuning, "waypoint_surge_mps")) p.waypoint_surge_mps = *v;
+        if (auto v = number_for_key(*tuning, "waypoint_stop_radius_m")) p.waypoint_stop_radius_m = *v;
+        if (auto v = number_for_key(*tuning, "waypoint_slowdown_m")) p.waypoint_slowdown_m = *v;
+        if (auto v = number_for_key(*tuning, "max_yaw_rate_radps")) p.max_yaw_rate_radps = *v;
+        params.archetype_control_loaded_from_json = true;
+    }
+
     void apply_multirotor_control_overrides(const std::string &control,
                                             FossenControlParams &params)
     {
@@ -349,7 +370,9 @@ namespace
         if (auto v = number_for_key(*tuning, "max_pitch_command")) p.max_pitch_command = *v;
         auto &allocator = params.fixedwing_allocator;
         if (auto v = number_for_key(*tuning, "elevator_kp")) allocator.elevator_kp = *v;
+        if (auto v = number_for_key(*tuning, "elevator_kd")) allocator.elevator_kd = *v;
         if (auto v = number_for_key(*tuning, "aileron_kp")) allocator.aileron_kp = *v;
+        if (auto v = number_for_key(*tuning, "aileron_kd")) allocator.aileron_kd = *v;
         if (auto v = number_for_key(*tuning, "rudder_kp")) allocator.rudder_kp = *v;
         if (auto v = number_for_key(*tuning, "throttle_trim")) allocator.throttle_trim = *v;
         if (auto v = number_for_key(*tuning, "throttle_kp")) allocator.throttle_kp = *v;
@@ -499,6 +522,8 @@ namespace
                 if (auto v = number_for_key(*ground_motor, "speed_gain_n_per_mps"))
                     params.ground_allocator.longitudinal_speed_gain_N_per_mps = *v;
             }
+            if (control)
+                apply_ground_control_overrides(*control, params);
             params.source_path = path.string();
             params.loaded_from_json = true;
             return validate(params, error);

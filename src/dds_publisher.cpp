@@ -577,7 +577,8 @@ namespace hydrox
     void DdsPublisher::publish_fc_snapshot(const FcSnapshot &fs,
                                                   const std::string &gnc_mode_str,
                                                   bool hil_connected,
-                                                  bool ekf_init)
+                                                  bool ekf_init,
+                                                  bool actuator_authorized)
     {
         if (!connected_)
             return;
@@ -680,6 +681,8 @@ namespace hydrox
                     cdr.float32(fs.thrust);
                     cdr.float64_array(fs.fin_deg, 4);
                     cdr.float64(static_cast<double>(fs.rpm));
+                    cdr.float32_array(fs.normalized, 8);
+                    cdr.uint8(fs.actuator_channel_count);
                 });
         }
         }
@@ -695,9 +698,10 @@ namespace hydrox
                 {
                     cdr.header(stamp_ns);
                     cdr.string(gnc_mode_str.c_str());
-                    cdr.uint8(hil_connected ? 1u : 0u);
+                    cdr.uint8(actuator_authorized ? 1u : 0u);
                     cdr.boolean(hil_connected);
                     cdr.boolean(ekf_init);
+                    cdr.boolean(actuator_authorized);
                 });
             if (buffered)
                 last_status_pub_us_ = fs.timestamp_us;

@@ -85,6 +85,32 @@ namespace
         return f;
     }
 
+    hydrox::MavFrame hil_wheel_odometry(uint64_t time_us, bool valid = true)
+    {
+        hydrox::MavFrame f;
+        f.msg_id = hydrox::MSGID_HIL_WHEEL_ODOMETRY;
+        f.payload.resize(hydrox::HIL_WHEEL_ODOMETRY_PAYLOAD_LEN, 0);
+        const float right_radps = 10.0f;
+        const float left_radps = 12.0f;
+        const float forward_mps = 0.7546f;
+        const float yaw_rate_radps = 0.4204f;
+        const float velocity_variance = 0.0025f;
+        const float yaw_rate_variance = 0.01f;
+        write_le(f.payload, 0, time_us);
+        write_le(f.payload, 8, right_radps);
+        write_le(f.payload, 12, left_radps);
+        write_le(f.payload, 16, forward_mps);
+        write_le(f.payload, 20, yaw_rate_radps);
+        write_le(f.payload, 24, velocity_variance);
+        write_le(f.payload, 28, yaw_rate_variance);
+        f.payload[32] = valid
+            ? hydrox::HIL_WHEEL_ODOMETRY_FLAG_VELOCITY_VALID |
+              hydrox::HIL_WHEEL_ODOMETRY_FLAG_WHEEL_SPEEDS_VALID |
+              hydrox::HIL_WHEEL_ODOMETRY_FLAG_YAW_RATE_VALID
+            : 0u;
+        return f;
+    }
+
     hydrox::MavFrame hil_gps(
         uint64_t time_us,
         uint8_t fix_type = 3,
@@ -233,6 +259,17 @@ int main()
     fails += expect(!codec.parse_hil_dvl(legacy_dvl).velocity_valid(),
                     "legacy 25-byte DVL payload is rejected") ? 0 : 1;
 
+    const auto parsed_wheel = codec.parse_hil_wheel_odometry(
+        hil_wheel_odometry(100000));
+    fails += expect(parsed_wheel.velocity_valid() &&
+                        parsed_wheel.wheel_speeds_valid() &&
+                        std::abs(parsed_wheel.forward_mps - 0.7546f) < 1e-6f,
+                    "wheel-odometry payload preserves encoder-derived velocity") ? 0 : 1;
+    auto short_wheel = hil_wheel_odometry(100000);
+    short_wheel.payload.resize(hydrox::HIL_WHEEL_ODOMETRY_PAYLOAD_LEN - 1);
+    fails += expect(!codec.parse_hil_wheel_odometry(short_wheel).velocity_valid(),
+                    "truncated wheel-odometry payload is rejected") ? 0 : 1;
+
     age_adapter.begin_cycle();
     age_adapter.ingest_frame(hil_dvl(100000), codec);
     age_adapter.ingest_frame(hil_gps(100000), codec);
@@ -369,6 +406,26 @@ int main()
             usv_nav.gps.has_value() &&
             !usv_nav.gps->has_altitude,
         "USV profile applies a surface constraint without pressure data") ? 0 : 1;
+
+    hydrox::SensorAdapter ugv_adapter{
+        hydrox::SensorAdapter::Params{hydrox::VehicleClass::UGV_DIFFERENTIAL}};
+    ugv_adapter.begin_cycle();
+    ugv_adapter.ingest_frame(hil_dvl(100000), codec);
+    ugv_adapter.ingest_frame(hil_wheel_odometry(100000), codec);
+    ugv_adapter.ingest_frame(hil_gps(100000), codec);
+    ugv_adapter.ingest_frame(
+        hil_sensor(0.0f, 0.0f, -9.80665f,
+                   kHilFieldsAccel | kHilFieldsGyro | kHilFieldsMag,
+                   25.0f, 0.0f, 43.30127f, 100000),
+        codec);
+    const auto ugv_nav = ugv_adapter.build();
+    fails += expect(
+        ugv_nav.wheel_odometry_recent &&
+            ugv_nav.measurements.wheel_odometry_velocity_body.meta.valid &&
+            !ugv_nav.dvl.has_value() && !ugv_nav.water_dvl.has_value() &&
+            ugv_nav.measurements.depth.meta.source ==
+                hydrox::NavMeasurementSource::SurfaceConstraint,
+        "UGV profile fuses wheel odometry and rejects DVL with a ground constraint") ? 0 : 1;
 
     hydrox::SensorAdapter uav_adapter{
         hydrox::SensorAdapter::Params{hydrox::VehicleClass::UAV_MULTIROTOR}};

@@ -772,6 +772,24 @@ int main(int argc, char *argv[])
                     fs.gps_ve = static_cast<double>(last_gps.ve) * 0.01;
                     fs.gps_vd = static_cast<double>(last_gps.vd) * 0.01;
                 }
+                for (size_t i = 0; i < norm.size(); ++i)
+                    fs.normalized[i] = norm[i];
+                if (use_vehicle_bundle && vehicle_bundle.logical_actuator_count > 0)
+                    fs.actuator_channel_count = static_cast<uint8_t>(
+                        std::min<size_t>(vehicle_bundle.logical_actuator_count, norm.size()));
+                else
+                {
+                    switch (vehicle_params.archetype)
+                    {
+                    case VehicleArchetype::DifferentialDrive:
+                    case VehicleArchetype::Surface: fs.actuator_channel_count = 2; break;
+                    case VehicleArchetype::Multirotor:
+                    case VehicleArchetype::FixedWing: fs.actuator_channel_count = 4; break;
+                    case VehicleArchetype::SlenderBodyFin: fs.actuator_channel_count = 5; break;
+                    case VehicleArchetype::Thruster:
+                    case VehicleArchetype::VTOL: fs.actuator_channel_count = 8; break;
+                    }
+                }
                 fs.fins[0] = norm[0];
                 fs.fins[1] = norm[1];
                 fs.fins[2] = norm[2];
@@ -810,6 +828,7 @@ int main(int argc, char *argv[])
                 dds_sample.gnc_mode = mode_str;
                 dds_sample.hil_connected = true;
                 dds_sample.ekf_initialized = ekf_init;
+                dds_sample.actuator_authorized = runtime_tick.actuator_authorized;
                 dds_sample.passive_sonar = nav.passive_sonar;
                 dds_sample.acoustic_neighbors = nav.acoustic_neighbors;
                 dds_sample.rangefinder_scan = nav.rangefinder_scan;

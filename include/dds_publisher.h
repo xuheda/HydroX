@@ -48,7 +48,8 @@ namespace hydrox
         void publish_fc_snapshot(const FcSnapshot &fs,
                                  const std::string &gnc_mode_str,
                                  bool hil_connected,
-                                 bool ekf_init);
+                                 bool ekf_init,
+                                 bool actuator_authorized);
         void publish_passive_sonar_bearing(const HilPassiveSonarBearingMsg &bearing);
         void publish_acoustic_neighbors(const HilAcousticNeighborsMsg &neighbors);
         void publish_rangefinder_scan(const HilRangeFinderScanMsg &scan);

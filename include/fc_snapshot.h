@@ -50,6 +50,8 @@ namespace hydrox
         double fin_deg[4] = {}; // fin command in degrees for telemetry
         float thrust = 0.0f;    // normalized thrust [-1, 1]
         float rpm = 0.0f;       // commanded/actual RPM used by actuator output topic
+        float normalized[8] = {}; // vehicle-neutral logical actuator channels
+        uint8_t actuator_channel_count = 0;
 
         // Mission state exposed on the vehicle state-estimate topic.
         char mission_state[16] = "IDLE"; // IDLE / RUNNING / COMPLETE / FAILED

@@ -160,7 +160,8 @@ namespace hydrox::sitl
                     sample.snapshot,
                     sample.gnc_mode,
                     sample.hil_connected,
-                    sample.ekf_initialized);
+                    sample.ekf_initialized,
+                    sample.actuator_authorized);
                 publisher->publish_passive_sonar_bearing(sample.passive_sonar);
                 publisher->publish_acoustic_neighbors(sample.acoustic_neighbors);
                 publisher->publish_rangefinder_scan(sample.rangefinder_scan);
