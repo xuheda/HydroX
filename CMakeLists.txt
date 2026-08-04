@@ -149,6 +149,8 @@ set(HYDROX_CORE_SOURCES
   src/gnc/thruster_controller.cpp
   src/gnc/surface_allocator.cpp
   src/gnc/surface_controller.cpp
+  src/gnc/ground_allocator.cpp
+  src/gnc/ground_controller.cpp
   src/gnc/multirotor_allocator.cpp
   src/gnc/multirotor_controller.cpp
   src/gnc/fixedwing_allocator.cpp
@@ -302,6 +304,12 @@ if(HYDROX_BUILD_TESTS)
   add_executable(test_surface_controller tests/test_surface_controller.cpp)
   target_link_libraries(test_surface_controller PRIVATE hydrox)
   add_test(NAME test_surface_controller COMMAND test_surface_controller)
+
+  add_executable(test_ground_controller tests/test_ground_controller.cpp)
+  target_link_libraries(test_ground_controller PRIVATE hydrox)
+  add_test(NAME test_ground_controller COMMAND test_ground_controller)
+  set_tests_properties(test_ground_controller PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
   add_executable(test_thruster_allocator tests/test_thruster_allocator.cpp)
   target_link_libraries(test_thruster_allocator PRIVATE hydrox)

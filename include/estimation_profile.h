@@ -71,6 +71,7 @@ namespace hydrox
         bool estimate_medium_velocity = true;
         bool fuse_bottom_track_dvl = true;
         bool fuse_relative_medium_velocity = true;
+        bool fuse_wheel_odometry = false;
         bool fuse_gps_position = true;
         bool fuse_gps_velocity = true;
         bool fuse_magnetometer = true;

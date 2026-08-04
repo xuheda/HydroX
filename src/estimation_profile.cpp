@@ -30,6 +30,28 @@ namespace hydrox
             return profile;
         }
 
+        EstimationProfile ugv_profile()
+        {
+            EstimationProfile profile;
+            profile.vehicle_class = VehicleClass::UGV_DIFFERENTIAL;
+            profile.vertical_aid = VerticalAidMode::SurfaceConstraint;
+            profile.medium_velocity_kind = MediumVelocityKind::None;
+            profile.estimate_medium_velocity = false;
+            profile.fuse_bottom_track_dvl = false;
+            profile.fuse_relative_medium_velocity = false;
+            profile.fuse_wheel_odometry = true;
+            profile.ekf.q_pos = 0.03;
+            profile.ekf.q_att = 0.003;
+            profile.ekf.q_vel = 0.25;
+            profile.ekf.q_medium_velocity = 0.0;
+            profile.ekf.r_vertical = profile.surface_constraint_variance;
+            profile.ekf.r_gps_xy = 0.25;
+            profile.ekf.r_gps_velocity = 0.09;
+            profile.ekf.initial_position_variance = 2.0;
+            profile.ekf.initial_attitude_variance = 0.25;
+            return profile;
+        }
+
         EstimationProfile uav_profile(VehicleClass vehicle_class)
         {
             EstimationProfile profile;
@@ -63,6 +85,8 @@ namespace hydrox
         {
         case VehicleClass::USV:
             return usv_profile();
+        case VehicleClass::UGV_DIFFERENTIAL:
+            return ugv_profile();
         case VehicleClass::UAV_MULTIROTOR:
         case VehicleClass::UAV_FIXED_WING:
         case VehicleClass::UAV_VTOL:

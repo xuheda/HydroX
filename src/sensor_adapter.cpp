@@ -111,6 +111,7 @@ namespace hydrox
         _imu = {};
         _last_gps = {};
         _last_dvl = {};
+        _last_wheel_odometry = {};
         _last_truth = {};
         _last_passive_sonar = {};
         _last_acoustic_neighbors = {};
@@ -121,6 +122,7 @@ namespace hydrox
         _gps_new_this_cycle = false;
         _last_gps_time_s = -1.0;
         _last_dvl_time_s = -1.0;
+        _last_wheel_odometry_time_s = -1.0;
         _last_truth_time_s = -1.0;
     }
 
@@ -154,6 +156,11 @@ namespace hydrox
             if (_last_dvl.velocity_valid())
                 _last_dvl_time_s = hil_time_s(_last_dvl.time_usec);
             break;
+        case MSGID_HIL_WHEEL_ODOMETRY:
+            _last_wheel_odometry = codec.parse_hil_wheel_odometry(frame);
+            if (_last_wheel_odometry.velocity_valid())
+                _last_wheel_odometry_time_s = hil_time_s(_last_wheel_odometry.time_usec);
+            break;
         case MSGID_HIL_TRUTH_STATE:
             _last_truth = codec.parse_hil_truth_state(frame);
             _truth_valid = _last_truth.valid;
@@ -182,12 +189,15 @@ namespace hydrox
         out.imu = _imu;
         out.last_gps = _last_gps;
         out.last_dvl = _last_dvl;
+        out.wheel_odometry = _last_wheel_odometry;
         out.truth = _last_truth;
         out.passive_sonar = _last_passive_sonar;
         out.acoustic_neighbors = _last_acoustic_neighbors;
         out.rangefinder_scan = _last_rangefinder_scan;
         const double imu_timestamp_s = hil_time_s(_imu.time_usec);
         const double dvl_age_s = measurement_age_s(imu_timestamp_s, _last_dvl_time_s);
+        const double wheel_odometry_age_s = measurement_age_s(
+            imu_timestamp_s, _last_wheel_odometry_time_s);
         const double gps_age_s = measurement_age_s(imu_timestamp_s, _last_gps_time_s);
         const double truth_age_s = measurement_age_s(imu_timestamp_s, _last_truth_time_s);
         out.truth_valid =
@@ -312,6 +322,32 @@ namespace hydrox
         out.measurements.water_dvl_velocity_body.meta.age_s = out.dvl_age_s;
         out.measurements.water_dvl_velocity_body.meta.source = NavMeasurementSource::Dvl;
         out.measurements.water_dvl_velocity_body.meta.frame = NavMeasurementFrame::BodyFRD;
+
+        const bool wheel_odometry_recent =
+            _p.estimation_profile.fuse_wheel_odometry &&
+            _last_wheel_odometry.velocity_valid() &&
+            wheel_odometry_age_s >= 0.0 &&
+            wheel_odometry_age_s <= _p.wheel_odometry_timeout_s;
+        out.wheel_odometry_recent = wheel_odometry_recent;
+        out.wheel_odometry_age_s = wheel_odometry_age_s;
+        out.measurements.wheel_odometry_velocity_body.value = Eigen::Vector3d(
+            _last_wheel_odometry.forward_mps, 0.0, 0.0);
+        const double wheel_velocity_variance =
+            _last_wheel_odometry.velocity_variance > 0.0f
+                ? static_cast<double>(_last_wheel_odometry.velocity_variance)
+                : _p.wheel_odometry_velocity_variance;
+        out.measurements.wheel_odometry_velocity_body.covariance = diagonal3(
+            wheel_velocity_variance,
+            _p.wheel_nonholonomic_variance,
+            _p.wheel_nonholonomic_variance);
+        out.measurements.wheel_odometry_velocity_body.meta.valid = wheel_odometry_recent;
+        out.measurements.wheel_odometry_velocity_body.meta.timestamp_s =
+            hil_time_s(_last_wheel_odometry.time_usec);
+        out.measurements.wheel_odometry_velocity_body.meta.age_s = wheel_odometry_age_s;
+        out.measurements.wheel_odometry_velocity_body.meta.source =
+            NavMeasurementSource::WheelOdometry;
+        out.measurements.wheel_odometry_velocity_body.meta.frame =
+            NavMeasurementFrame::BodyFRD;
 
         Eigen::Vector3d gps_position_ned = Eigen::Vector3d::Zero();
         const bool gps_projection_valid = geodetic_to_local_ned(

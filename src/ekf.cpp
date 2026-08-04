@@ -72,6 +72,7 @@ namespace hydrox {
 		_reset_covariance();
 		_last_bottom_dvl_timestamp_s = -std::numeric_limits<double>::infinity();
 		_last_water_dvl_timestamp_s = -std::numeric_limits<double>::infinity();
+		_last_wheel_odometry_timestamp_s = -std::numeric_limits<double>::infinity();
 		_last_gps_timestamp_s = -std::numeric_limits<double>::infinity();
 		_initialized = true;
 	}
@@ -122,6 +123,8 @@ namespace hydrox {
 			&& meas.dvl_velocity_body.meta.valid;
 		const bool water_dvl_available = water_dvl && water_dvl->beam_valid > 0
 			&& meas.water_dvl_velocity_body.meta.valid;
+		const bool wheel_odometry_available =
+			meas.wheel_odometry_velocity_body.meta.valid;
 
 		if (bottom_dvl_available
 			&& _consume_new_sample(
@@ -142,7 +145,20 @@ namespace hydrox {
 				++_last_stats.water_dvl_accepted;
 			else
 				++_last_stats.water_dvl_rejected;
-		} else if (!have_accel && !bottom_dvl_available && !water_dvl_available)
+		}
+		if (wheel_odometry_available
+			&& _consume_new_sample(
+				meas.wheel_odometry_velocity_body.meta.timestamp_s,
+				_last_wheel_odometry_timestamp_s)) {
+			if (_update_dvl(
+					meas.wheel_odometry_velocity_body.value,
+					_valid_cov3(meas.wheel_odometry_velocity_body.covariance, _R_dvl)))
+				++_last_stats.wheel_odometry_accepted;
+			else
+				++_last_stats.wheel_odometry_rejected;
+		}
+		if (!have_accel && !bottom_dvl_available && !water_dvl_available
+			&& !wheel_odometry_available)
 			_update_zvu(); // kinematic fallback: weakly hold velocity near zero without
 						   // DVL
 
@@ -232,6 +248,7 @@ namespace hydrox {
 			&& (out.medium_velocity_std_ned.array() <= _medium_velocity_valid_std)
 				   .all();
 		out.dvl_valid = bottom_dvl.has_value();
+		out.wheel_odometry_valid = wheel_odometry_available;
 		return out;
 	}
 

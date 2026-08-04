@@ -63,6 +63,8 @@ namespace hydrox
             uint32_t dvl_rejected = 0;
             uint32_t water_dvl_accepted = 0;
             uint32_t water_dvl_rejected = 0;
+            uint32_t wheel_odometry_accepted = 0;
+            uint32_t wheel_odometry_rejected = 0;
             uint32_t depth_accepted = 0;
             uint32_t depth_rejected = 0;
             uint32_t gps_xy_accepted = 0;
@@ -122,6 +124,7 @@ namespace hydrox
         bool _estimate_medium_velocity = true;
         double _last_bottom_dvl_timestamp_s = -std::numeric_limits<double>::infinity();
         double _last_water_dvl_timestamp_s = -std::numeric_limits<double>::infinity();
+        double _last_wheel_odometry_timestamp_s = -std::numeric_limits<double>::infinity();
         double _last_gps_timestamp_s = -std::numeric_limits<double>::infinity();
         bool _initialized = false;
         InnovationStats _last_stats{};

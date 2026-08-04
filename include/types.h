@@ -21,6 +21,7 @@ namespace hydrox
         UAV_MULTIROTOR = 2,
         UAV_FIXED_WING = 3,
         UAV_VTOL = 4,
+        UGV_DIFFERENTIAL = 5,
     };
 
     /**
@@ -51,6 +52,9 @@ namespace hydrox
         MediumVelocityKind medium_velocity_kind = MediumVelocityKind::None;
         bool medium_velocity_valid = false;
         bool dvl_valid = false;
+        bool wheel_odometry_valid = false;
+        double wheel_right_radps = 0.0;
+        double wheel_left_radps = 0.0;
         double timestamp = 0.0;
 
         static NavigationState zeros()

@@ -281,6 +281,26 @@ namespace
         params.archetype_control_loaded_from_json = true;
     }
 
+    void apply_ground_controller(const std::string &json, FossenControlParams &params)
+    {
+        const auto controller = object_for_key(json, "differential_drive");
+        if (!controller)
+            return;
+        auto &out = params.ground_gnc;
+        assign_if_present(*controller, "surge_kp", out.surge_kp);
+        assign_if_present(*controller, "surge_ki", out.surge_ki);
+        assign_if_present(*controller, "surge_integral_limit", out.surge_integral_limit);
+        assign_if_present(*controller, "yaw_heading_kp", out.yaw_heading_kp);
+        assign_if_present(*controller, "yaw_rate_kp", out.yaw_rate_kp);
+        assign_if_present(*controller, "max_force_n", out.max_force_N);
+        assign_if_present(*controller, "max_moment_nm", out.max_moment_Nm);
+        assign_if_present(*controller, "waypoint_surge_mps", out.waypoint_surge_mps);
+        assign_if_present(*controller, "waypoint_stop_radius_m", out.waypoint_stop_radius_m);
+        assign_if_present(*controller, "waypoint_slowdown_m", out.waypoint_slowdown_m);
+        assign_if_present(*controller, "max_yaw_rate_radps", out.max_yaw_rate_radps);
+        params.archetype_control_loaded_from_json = true;
+    }
+
     void apply_multirotor_controller(const std::string &json, FossenControlParams &params)
     {
         const auto controller = object_for_key(json, "multirotor");
@@ -374,6 +394,8 @@ namespace
             return vehicle_class == VehicleClass::UAV_FIXED_WING;
         case VehicleArchetype::VTOL:
             return vehicle_class == VehicleClass::UAV_VTOL;
+        case VehicleArchetype::DifferentialDrive:
+            return vehicle_class == VehicleClass::UGV_DIFFERENTIAL;
         }
         return false;
     }
@@ -388,6 +410,8 @@ namespace
         if (key == "multirotor" || key == "quadrotor") return VehicleArchetype::Multirotor;
         if (key == "fixedwing") return VehicleArchetype::FixedWing;
         if (key == "vtol" || key == "liftcruise") return VehicleArchetype::VTOL;
+        if (key == "differentialdrive" || key == "skidsteer" || key == "ugv")
+            return VehicleArchetype::DifferentialDrive;
         ok = false;
         return VehicleArchetype::SlenderBodyFin;
     }
@@ -401,6 +425,8 @@ namespace
         if (key == "uavmultirotor" || key == "multirotor") return VehicleClass::UAV_MULTIROTOR;
         if (key == "uavfixedwing" || key == "fixedwing") return VehicleClass::UAV_FIXED_WING;
         if (key == "uavvtol" || key == "vtol") return VehicleClass::UAV_VTOL;
+        if (key == "ugv" || key == "ugvdifferential" || key == "ground")
+            return VehicleClass::UGV_DIFFERENTIAL;
         ok = false;
         return VehicleClass::UUV;
     }
@@ -414,6 +440,7 @@ namespace
         case VehicleArchetype::Multirotor: return builtin_fossen_control_params("X500");
         case VehicleArchetype::FixedWing: return builtin_fossen_control_params("RCCessna");
         case VehicleArchetype::VTOL: return builtin_fossen_control_params("StandardVTOL");
+        case VehicleArchetype::DifferentialDrive: return builtin_fossen_control_params("R1Rover");
         case VehicleArchetype::SlenderBodyFin:
         default: return builtin_fossen_control_params("EcaA9");
         }
@@ -423,7 +450,9 @@ namespace
 bool validate_vehicle_bundle(VehicleBundle &bundle, std::string *error)
 {
     bundle.validation.clear();
-    bundle.logical_actuator_count = bundle.thrusters.size();
+    bundle.logical_actuator_count =
+        bundle.control.archetype == VehicleArchetype::DifferentialDrive
+            ? 2u : bundle.thrusters.size();
     bundle.allocation_rank = 0;
     if (bundle.schema_version != "1.0")
         add_issue(bundle, BundleIssueSeverity::Error, "schema_version",
@@ -465,6 +494,16 @@ bool validate_vehicle_bundle(VehicleBundle &bundle, std::string *error)
         if (params.mass_total <= 0.0 || params.max_thrust_per_thruster_N <= 0.0)
             add_issue(bundle, BundleIssueSeverity::Error, "control_model",
                       "surface vehicles require positive mass and thrust authority");
+    }
+    else if (params.archetype == VehicleArchetype::DifferentialDrive)
+    {
+        const auto &ground = params.ground_allocator;
+        if (params.mass_total <= 0.0 || ground.wheel_radius_m <= 0.0 ||
+            ground.track_width_m <= 0.0 ||
+            ground.max_wheel_angular_speed_radps <= 0.0 ||
+            ground.longitudinal_speed_gain_N_per_mps <= 0.0)
+            add_issue(bundle, BundleIssueSeverity::Error, "control_model",
+                      "differential-drive vehicles require positive mass, wheel geometry, speed limit, and motor gain");
     }
     else if (params.mass_total <= 0.0)
         add_issue(bundle, BundleIssueSeverity::Error, "control_model.mass_kg",
@@ -638,6 +677,18 @@ VehicleBundle load_vehicle_bundle(const std::string &path, std::string *error)
                           bundle.control.surface_channel_lever_arm_m);
         if (const auto controller = object_for_key(*model, "controller"))
             apply_surface_controller(*controller, bundle.control);
+    }
+    else if (bundle.control.archetype == VehicleArchetype::DifferentialDrive)
+    {
+        auto &ground = bundle.control.ground_allocator;
+        assign_if_present(*model, "wheel_radius_m", ground.wheel_radius_m);
+        assign_if_present(*model, "track_width_m", ground.track_width_m);
+        assign_if_present(*model, "max_wheel_angular_speed_radps",
+                          ground.max_wheel_angular_speed_radps);
+        assign_if_present(*model, "longitudinal_speed_gain_n_per_mps",
+                          ground.longitudinal_speed_gain_N_per_mps);
+        if (const auto controller = object_for_key(*model, "controller"))
+            apply_ground_controller(*controller, bundle.control);
     }
     else if (bundle.control.archetype == VehicleArchetype::Multirotor)
     {

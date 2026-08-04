@@ -9,6 +9,8 @@
 #include "gnc/control_allocator.h"
 #include "gnc/fixedwing_allocator.h"
 #include "gnc/fixedwing_controller.h"
+#include "gnc/ground_allocator.h"
+#include "gnc/ground_controller.h"
 #include "gnc/motor_model.h"
 #include "gnc/gnc_controller.h"
 #include "gnc/multirotor_controller.h"
@@ -32,6 +34,7 @@ namespace hydrox
         Multirotor,
         FixedWing,
         VTOL,
+        DifferentialDrive,
     };
 
     /** Map a (possibly non-canonical) vehicle type string to its control archetype. */
@@ -54,6 +57,8 @@ namespace hydrox
         FixedWingController::Params fixedwing_gnc;
         FixedWingAllocator::Params fixedwing_allocator;
         VtolController::Params vtol_gnc;
+        DifferentialDriveController::Params ground_gnc;
+        DifferentialDriveAllocator::Params ground_allocator;
         bool yaw_rate_control_loaded_from_json = false;
         bool archetype_control_loaded_from_json = false;
 

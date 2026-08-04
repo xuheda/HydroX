@@ -2,6 +2,8 @@
 #include "gnc/control_allocator.h"
 #include "gnc/fixedwing_allocator.h"
 #include "gnc/fixedwing_controller.h"
+#include "gnc/ground_allocator.h"
+#include "gnc/ground_controller.h"
 #include "gnc/vtol_allocator.h"
 #include "gnc/vtol_controller.h"
 #include "vehicle_bundle.h"
@@ -139,6 +141,13 @@ ControlStack build_control_stack(const FossenControlParams &vp)
                                     ? vp.max_total_lift_N
                                     : cp.mass * cp.g * 2.5;
         stack.allocator = std::make_unique<QuadrotorAllocator>(ap);
+        return stack;
+    }
+
+    if (vp.archetype == VehicleArchetype::DifferentialDrive)
+    {
+        stack.controller = std::make_unique<DifferentialDriveController>(vp.ground_gnc);
+        stack.allocator = std::make_unique<DifferentialDriveAllocator>(vp.ground_allocator);
         return stack;
     }
 

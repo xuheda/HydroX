@@ -47,6 +47,8 @@ namespace hydrox
             return 80; // Custom OceanX sensor, agreed by both sides
         case MSGID_HIL_RANGEFINDER_SCAN:
             return 81; // Custom OceanX sensor, agreed by both sides
+        case MSGID_HIL_WHEEL_ODOMETRY:
+            return 83; // 33-byte differential-drive odometry schema
         default:
             return 0;
         }
@@ -381,6 +383,31 @@ namespace hydrox
         {
             m.flags &= static_cast<uint8_t>(~HIL_DVL_FLAG_ALTITUDE_VALID);
         }
+        return m;
+    }
+
+    HilWheelOdometryMsg MavlinkHIL::parse_hil_wheel_odometry(const MavFrame &f) const
+    {
+        const auto &p = f.payload;
+        HilWheelOdometryMsg m;
+        if (p.size() != HIL_WHEEL_ODOMETRY_PAYLOAD_LEN)
+            return m;
+        const uint8_t *ptr = p.data();
+        le_read(ptr, m.time_usec);
+        le_read(ptr + 8, m.right_radps);
+        le_read(ptr + 12, m.left_radps);
+        le_read(ptr + 16, m.forward_mps);
+        le_read(ptr + 20, m.yaw_rate_radps);
+        le_read(ptr + 24, m.velocity_variance);
+        le_read(ptr + 28, m.yaw_rate_variance);
+        le_read(ptr + 32, m.flags);
+        if (!m.velocity_valid())
+            m.flags &= static_cast<uint8_t>(~HIL_WHEEL_ODOMETRY_FLAG_VELOCITY_VALID);
+        if (!m.wheel_speeds_valid())
+            m.flags &= static_cast<uint8_t>(~HIL_WHEEL_ODOMETRY_FLAG_WHEEL_SPEEDS_VALID);
+        if (!std::isfinite(m.yaw_rate_radps) ||
+            !std::isfinite(m.yaw_rate_variance) || m.yaw_rate_variance <= 0.0f)
+            m.flags &= static_cast<uint8_t>(~HIL_WHEEL_ODOMETRY_FLAG_YAW_RATE_VALID);
         return m;
     }
 

@@ -47,6 +47,7 @@ namespace hydrox
     constexpr uint32_t MSGID_HIL_PASSIVE_SONAR = 11062; // Custom OceanX sensor
     constexpr uint32_t MSGID_HIL_ACOUSTIC_NEIGHBORS = 11063; // Custom OceanX sensor
     constexpr uint32_t MSGID_HIL_RANGEFINDER_SCAN = 11064; // Custom OceanX sensor
+    constexpr uint32_t MSGID_HIL_WHEEL_ODOMETRY = 11065; // Custom UGV wheel odometry
     constexpr size_t MAVLINK_MAX_PAYLOAD_LEN = 255;
     constexpr size_t MAVLINK_MAX_PACKET_LEN =
         10 + MAVLINK_MAX_PAYLOAD_LEN + 2 + MAVLINK_SIGNATURE_BLOCK_LEN;
@@ -55,6 +56,10 @@ namespace hydrox
 
     /** In-place HIL_DVL (11060) schema. There is no legacy payload fallback. */
     constexpr size_t HIL_DVL_PAYLOAD_LEN = 26;
+    constexpr size_t HIL_WHEEL_ODOMETRY_PAYLOAD_LEN = 33;
+    constexpr uint8_t HIL_WHEEL_ODOMETRY_FLAG_VELOCITY_VALID = 1u << 0;
+    constexpr uint8_t HIL_WHEEL_ODOMETRY_FLAG_WHEEL_SPEEDS_VALID = 1u << 1;
+    constexpr uint8_t HIL_WHEEL_ODOMETRY_FLAG_YAW_RATE_VALID = 1u << 2;
     constexpr uint8_t HIL_DVL_FLAG_VELOCITY_VALID = 1u << 0;
     constexpr uint8_t HIL_DVL_FLAG_ALTITUDE_VALID = 1u << 1;
 
@@ -134,6 +139,30 @@ namespace hydrox
             return is_bottom_track() &&
                    (flags & HIL_DVL_FLAG_ALTITUDE_VALID) != 0 &&
                    std::isfinite(altitude_m);
+        }
+    };
+
+    struct HilWheelOdometryMsg
+    {
+        uint64_t time_usec = 0;
+        float right_radps = 0.0f;
+        float left_radps = 0.0f;
+        float forward_mps = 0.0f;
+        float yaw_rate_radps = 0.0f;
+        float velocity_variance = 0.0f;
+        float yaw_rate_variance = 0.0f;
+        uint8_t flags = 0;
+
+        bool velocity_valid() const
+        {
+            return (flags & HIL_WHEEL_ODOMETRY_FLAG_VELOCITY_VALID) != 0 &&
+                   std::isfinite(forward_mps) &&
+                   std::isfinite(velocity_variance) && velocity_variance > 0.0f;
+        }
+        bool wheel_speeds_valid() const
+        {
+            return (flags & HIL_WHEEL_ODOMETRY_FLAG_WHEEL_SPEEDS_VALID) != 0 &&
+                   std::isfinite(right_radps) && std::isfinite(left_radps);
         }
     };
 
@@ -238,6 +267,7 @@ namespace hydrox
         HilSensorMsg parse_hil_sensor(const MavFrame &f) const;
         HilGpsMsg parse_hil_gps(const MavFrame &f) const;
         HilDvlMsg parse_hil_dvl(const MavFrame &f) const;
+        HilWheelOdometryMsg parse_hil_wheel_odometry(const MavFrame &f) const;
         HilTruthStateMsg parse_hil_truth_state(const MavFrame &f) const;
         HilPassiveSonarBearingMsg parse_hil_passive_sonar(const MavFrame &f) const;
         HilAcousticNeighborsMsg parse_hil_acoustic_neighbors(const MavFrame &f) const;

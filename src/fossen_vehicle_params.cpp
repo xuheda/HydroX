@@ -404,6 +404,21 @@ namespace
 
     bool validate(FossenControlParams &p, std::string *error)
     {
+        if (p.archetype == VehicleArchetype::DifferentialDrive)
+        {
+            const auto &g = p.ground_allocator;
+            if (p.mass_total <= 0.0 || g.wheel_radius_m <= 0.0 ||
+                g.track_width_m <= 0.0 ||
+                g.max_wheel_angular_speed_radps <= 0.0 ||
+                g.longitudinal_speed_gain_N_per_mps <= 0.0)
+            {
+                set_error(error, "invalid differential-drive control parameters");
+                p.valid = false;
+                return false;
+            }
+            p.valid = true;
+            return true;
+        }
         if (p.archetype != VehicleArchetype::SlenderBodyFin)
         {
             if ((p.archetype == VehicleArchetype::Thruster ||
@@ -462,6 +477,32 @@ namespace
         const auto fins = actuators ? object_for_key(*actuators, "fins") : std::nullopt;
         const auto prop = actuators ? object_for_key(*actuators, "propeller") : std::nullopt;
         const auto control = object_for_key(json, "control");
+
+        if (params.archetype == VehicleArchetype::DifferentialDrive)
+        {
+            const auto body = object_for_key(json, "body");
+            const auto wheels = object_for_key(json, "wheels");
+            const auto ground_motor = object_for_key(json, "motor");
+            if (body)
+                if (auto v = number_for_key(*body, "mass_kg")) params.mass_total = *v;
+            if (wheels)
+            {
+                if (auto v = number_for_key(*wheels, "radius_m"))
+                    params.ground_allocator.wheel_radius_m = *v;
+                if (auto v = number_for_key(*wheels, "track_width_m"))
+                    params.ground_allocator.track_width_m = *v;
+            }
+            if (ground_motor)
+            {
+                if (auto v = number_for_key(*ground_motor, "max_angular_speed_radps"))
+                    params.ground_allocator.max_wheel_angular_speed_radps = *v;
+                if (auto v = number_for_key(*ground_motor, "speed_gain_n_per_mps"))
+                    params.ground_allocator.longitudinal_speed_gain_N_per_mps = *v;
+            }
+            params.source_path = path.string();
+            params.loaded_from_json = true;
+            return validate(params, error);
+        }
 
         if (params.archetype == VehicleArchetype::Surface)
         {
@@ -637,6 +678,8 @@ std::string canonical_vehicle_type(const std::string &type)
     if (key == "uav" || key == "quadrotor" || key == "multirotor" || key == "x500") return "X500";
     if (key == "fixedwing" || key == "aerosonde" || key == "rccessna") return "RCCessna";
     if (key == "standardvtol" || key == "vtol") return "StandardVTOL";
+    if (key == "r1rover" || key == "rover" || key == "ugv" ||
+        key == "differentialdrive") return "R1Rover";
     return type;
 }
 
@@ -649,6 +692,7 @@ VehicleArchetype archetype_for(const std::string &type)
     if (t == "X500") return VehicleArchetype::Multirotor;
     if (t == "RCCessna") return VehicleArchetype::FixedWing;
     if (t == "StandardVTOL") return VehicleArchetype::VTOL;
+    if (t == "R1Rover") return VehicleArchetype::DifferentialDrive;
     return VehicleArchetype::SlenderBodyFin;
 }
 
@@ -666,6 +710,7 @@ std::string fossen_params_filename(const std::string &type)
     if (t == "X500") return "x500_params.json";
     if (t == "RCCessna") return "rc_cessna_params.json";
     if (t == "StandardVTOL") return "standard_vtol_params.json";
+    if (t == "R1Rover") return "r1_rover_params.json";
     return {};
 }
 
@@ -678,6 +723,18 @@ FossenControlParams builtin_fossen_control_params(const std::string &type)
     out.source_path = "builtin:" + out.vehicle_type;
     out.motor.rho = 1028.0;
     out.allocator.rho = 1028.0;
+
+    if (out.archetype == VehicleArchetype::DifferentialDrive)
+    {
+        out.vehicle_class = VehicleClass::UGV_DIFFERENTIAL;
+        out.mass_total = 21.656;
+        out.ground_allocator.wheel_radius_m = 0.0686;
+        out.ground_allocator.track_width_m = 0.32634;
+        out.ground_allocator.max_wheel_angular_speed_radps = 40.0;
+        out.ground_allocator.longitudinal_speed_gain_N_per_mps = 180.0;
+        validate(out, nullptr);
+        return out;
+    }
 
     if (out.archetype == VehicleArchetype::Surface)
     {

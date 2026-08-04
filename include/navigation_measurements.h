@@ -10,6 +10,7 @@ namespace hydrox
         Imu,
         Depth,
         Dvl,
+        WheelOdometry,
         Gps,
         Magnetometer,
         SurfaceConstraint,
@@ -56,6 +57,8 @@ namespace hydrox
         Vector3Measurement dvl_velocity_body;
         /** Water-track DVL: body velocity relative to the water mass. */
         Vector3Measurement water_dvl_velocity_body;
+        /** Nonholonomic wheel-odometry body velocity [forward, lateral=0, vertical=0]. */
+        Vector3Measurement wheel_odometry_velocity_body;
         Vector3Measurement gps_position_ned;
         /** GPS ground velocity in the world NED frame. */
         Vector3Measurement gps_velocity_ned;
