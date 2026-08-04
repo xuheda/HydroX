@@ -28,6 +28,9 @@ secrets*
 # Python
 __pycache__/
 *.py[cod]
+# Training/evaluation implementations stay local; retain configs and docs.
+/learning/**/*.py
+
 cmake_install.cmake
 CMakeCache.txt
 CMakeFiles/
