@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vehicle Control Baselines · HydroX 文档</title>
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <header class="site-header"><div class="site-header__inner"><a class="site-title" href="index.html">HydroX 文档</a></div></header>
+  <main><article><h1 id="vehicle-control-baselines">Vehicle Control Baselines</h1>
+<p>更新日期：2026-09-26</p>
+<p><a href="index.html">返回 HydroX 文档首页</a> · <a href="../../doc/index.html">OceanX 集成文档</a></p>
+<h2 id="purpose">Purpose</h2>
+<p>The shipped vehicle parameters are conservative baseline values for repeatable waypoint following in the three-domain demonstration. They are intended for integration, mission, and UI validation rather than aggressive handling or system-identification work.</p>
+<h2 id="active-vehicle-profiles">Active Vehicle Profiles</h2>
+<table><thead><tr><th>Vehicle</th><th>Domain and controller</th><th>Validated baseline</th></tr></thead><tbody><tr><td>X500</td><td>Multirotor</td><td>4 m/s routes; 0.32 rad maximum tilt</td></tr><tr><td>StandardVTOL</td><td>VTOL</td><td>6 m/s transition-safe routes; 0.28 rad maximum tilt</td></tr><tr><td>RCCessna</td><td>Fixed wing</td><td>12 m/s launch/cruise; 0.24 rad route bank limit; positive elevator and negative aileron allocator signs</td></tr><tr><td>WAM-V</td><td>Surface vessel</td><td>1.0 m/s route; explicit <code>surface</code> control gains in its VehicleBundle</td></tr><tr><td>EcaA9 / EcaA9Test</td><td>Slender-body AUV family</td><td>2.0 m/s; two plants, one shared family control object</td></tr><tr><td>LAUV / LAUVTest</td><td>Slender-body AUV family</td><td>2.0 m/s; two plants, one shared family control object</td></tr><tr><td>Desistek Saga</td><td>ROV</td><td>0.8 m/s depth/yaw inspection</td></tr><tr><td>RexROV2</td><td>ROV</td><td>0.6 m/s depth/yaw inspection</td></tr><tr><td>R1Rover</td><td>Differential drive</td><td>1.2 m/s land waypoint baseline</td></tr><tr><td>GenericAuvFinHitl</td><td>Slender-body AUV / FMUv6C</td><td>2.0 m/s software parity baseline; real-board validation pending</td></tr></tbody></table>
+<h2 id="parameter-loading-contract">Parameter Loading Contract</h2>
+<p>HydroX loads exactly one explicit VehicleBundle per process through <code>--vehicle-bundle</code>. Bundles live under <code>profiles/&lt;bundle&gt;/vehicle-bundle.json</code> and must use schema <code>2.0</code>; the loader rejects old parameter files, parameter directories, missing fields and vehicle-type fallback.</p>
+<p>The Bundle's <code>control_model</code> is the runtime source of truth for controller gains, limits and logical actuator layout. Its archetype groups are <code>slender_body_fin</code>, <code>thruster</code>, <code>surface</code>, <code>multirotor</code>, <code>fixed_wing</code>, <code>vtol</code> and <code>differential_drive</code>. ROV thruster limits and axis response are both explicit, and unactuated axes are represented by zero values.</p>
+<p>OceanX owns the physical plant files under <code>engine/Content/Fossen</code>, <code>engine/Content/Aero</code> and <code>engine/Content/Ground</code>. Those files describe mass, inertia, hydrodynamics/aerodynamics, ground dynamics and collision behavior; they do not override HydroX control parameters. No inertia-based gain normalization or missing-group fallback is applied at Bundle load time.</p>
+<h2 id="baseline-sweep">Baseline Sweep</h2>
+<p><code>demo/showcases/control_baseline.json</code> starts all eight per-vehicle planners, waits strictly for state/action readiness, and sends non-conflicting looping routes. Use it after bringing up the three-domain scenario:</p>
+<pre><code class="language-powershell">demo_showcase.bat demo\showcases\control_baseline.json 140 scenarios\default.json</code></pre>
+<p>Strict state/action readiness for all eight vehicles can consume roughly 60–70 seconds, so a 120–140 second metric window is recommended. Set <code>OCEANX_TRUTH_DIAGNOSTICS=1</code> to record plant truth beside estimated state without changing the normal feedback path.</p>
+<h2 id="focused-validation">Focused Validation</h2>
+<table><thead><tr><th>Scope</th><th>Artifact</th><th>Result</th></tr></thead><tbody><tr><td>Four AUV variants</td><td><code>artifacts/control_tuning/auv_variants_reached</code></td><td>All reached: Eca min 7.58/8.93 m; LAUV min 2.75/2.72 m; truth vertical RMS 0.03/0.09/0.32/0.31 m</td></tr><tr><td>RCCessna</td><td><code>artifacts/control_tuning/cessna_ekf_observable_final</code></td><td>Goal reached; truth vertical RMS 3.52 m, roll RMS 0.088 rad, pitch RMS 0.188 rad</td></tr><tr><td>WAM-V</td><td><code>artifacts/control_tuning/wamv_yaw_damped_final</code></td><td>Min waypoint distance 1.23 m estimated / 1.86 m truth; yaw-rate p95 reduced from 0.25 to 0.13 rad/s</td></tr><tr><td>R1Rover</td><td><code>artifacts/control_tuning/r1_rover_final</code></td><td>Min distance 0.28 m estimated / 0.60 m truth; speed MAE 0.061 m/s</td></tr><tr><td>GenericAuvFinHitl software</td><td><code>artifacts/control_tuning/generic_hitl_auv_software_final</code></td><td>Min distance 4.65 m; truth vertical RMS 0.10 m; speed MAE 0.20 m/s</td></tr></tbody></table>
+<p>The full eight-vehicle run is stored under <code>artifacts/control_tuning/fleet_final_covered</code>. Every vehicle produced stable sampled state; X500, StandardVTOL, LAUV, Desistek, and Rex completed their route acceptance during the window, while the deliberately long Cessna, WAM-V, and Eca legs showed positive progress without attitude or depth divergence.</p>
+<p>Focused launch commands use <code>control_fixedwing_tuning.json</code>, <code>control_variants.json</code>, <code>control_surface_tuning.json</code>, <code>control_rover_tuning.json</code>, and <code>control_hitl_auv_software.json</code>. The software HITL result validates the PC plant/bundle/control path only: no real FMUv6C was enumerated on 2026-08-07, so firmware, UART/DMA, timing, and physical I/O remain hardware acceptance work.</p>
+<h2 id="tuning-rules">Tuning Rules</h2>
+<p>Change one controller family at a time and keep waypoint speed below the documented baseline until the state topic shows stable tracking. Treat a new Bundle, airframe or hull mass, inertia, actuator cap, or coordinate convention as a new baseline-validation event. Verify <code>test_vehicle_bundle</code> and the eight-vehicle baseline sweep before promoting a change to a demonstration package.</p></article></main>
+</body>
+</html>

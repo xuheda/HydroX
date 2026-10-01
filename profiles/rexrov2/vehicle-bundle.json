@@ -1,0 +1,148 @@
+{
+  "schema_version": "2.0",
+  "id": "RexROV2",
+  "control_contract": "hydrox.control/thruster@2",
+  "archetype": "thruster",
+  "vehicle_class": "uuv",
+  "control_model": {
+    "mass_kg": 1862.87,
+    "motor": {
+      "tau_m": 0.2,
+      "KT_0": 0.4566,
+      "KQ_0": 0.06,
+      "D_prop": 0.14,
+      "rho": 1028,
+      "eta_motor": 0.85,
+      "V_bat": 24,
+      "rpm_max": 1525
+    },
+    "max_thrust_per_actuator_n": 1540,
+    "controller": {
+      "surge": {
+        "kp": 0.28,
+        "ki": 0.12,
+        "kd": 0.9,
+        "integral_limit": 2,
+        "accel_max": 0.35
+      },
+      "sway": {
+        "kp": 0.28,
+        "ki": 0,
+        "kd": 0.95,
+        "integral_limit": 0,
+        "accel_max": 0.3
+      },
+      "heave": {
+        "kp": 0.32,
+        "ki": 0,
+        "kd": 1.1,
+        "integral_limit": 0,
+        "accel_max": 0.32
+      },
+      "roll": {
+        "kp": 0,
+        "ki": 0,
+        "kd": 0,
+        "integral_limit": 0,
+        "accel_max": 0
+      },
+      "pitch": {
+        "kp": 0,
+        "ki": 0,
+        "kd": 0,
+        "integral_limit": 0,
+        "accel_max": 0
+      },
+      "yaw": {
+        "kp": 0.55,
+        "ki": 0,
+        "kd": 1.1,
+        "integral_limit": 0,
+        "accel_max": 0.28
+      }
+    }
+  },
+  "actuator_layout": {
+    "kind": "thrusters",
+    "thrusters": [
+      {
+        "position_m": [
+          0.4878,
+          0,
+          -0.2373
+        ],
+        "direction_body": [
+          0,
+          -1,
+          0
+        ],
+        "max_thrust_n": 1540
+      },
+      {
+        "position_m": [
+          -0.8217,
+          0,
+          -0.589
+        ],
+        "direction_body": [
+          0.2588077319964918,
+          0,
+          -0.9659288575556857
+        ],
+        "max_thrust_n": 1540
+      },
+      {
+        "position_m": [
+          0.8654,
+          0.5322,
+          -0.5332
+        ],
+        "direction_body": [
+          0,
+          -0.3826903371909773,
+          -0.9238766724085287
+        ],
+        "max_thrust_n": 1540
+      },
+      {
+        "position_m": [
+          0.8654,
+          -0.5322,
+          -0.5332
+        ],
+        "direction_body": [
+          0,
+          -0.3826903371909773,
+          0.9238766724085287
+        ],
+        "max_thrust_n": 1540
+      },
+      {
+        "position_m": [
+          -0.7076,
+          -0.5129,
+          -0.2404
+        ],
+        "direction_body": [
+          0.9063133908792761,
+          -0.42260624405338415,
+          0
+        ],
+        "max_thrust_n": 1540
+      },
+      {
+        "position_m": [
+          -0.7076,
+          0.5129,
+          -0.2404
+        ],
+        "direction_body": [
+          0.9063133908792761,
+          0.42260624405338415,
+          0
+        ],
+        "max_thrust_n": 1540
+      }
+    ]
+  }
+}

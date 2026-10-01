@@ -1,0 +1,39 @@
+{
+  "schema_version": "2.0",
+  "id": "R1Rover",
+  "control_contract": "hydrox.control/differential_drive@2",
+  "archetype": "differential_drive",
+  "vehicle_class": "ugv_differential",
+  "control_model": {
+    "mass_kg": 21.656,
+    "motor": {
+      "tau_m": 0.2,
+      "KT_0": 0.4566,
+      "KQ_0": 0.06,
+      "D_prop": 0.14,
+      "rho": 1028,
+      "eta_motor": 0.85,
+      "V_bat": 24,
+      "rpm_max": 1525
+    },
+    "controller": {
+      "surge_kp": 180,
+      "surge_ki": 30,
+      "surge_integral_limit": 1,
+      "yaw_heading_kp": 2.5,
+      "yaw_rate_kp": 12,
+      "max_force_N": 212.4,
+      "max_moment_Nm": 24,
+      "waypoint_surge_mps": 1.5,
+      "waypoint_stop_radius_m": 0.2,
+      "waypoint_slowdown_m": 1.5,
+      "max_yaw_rate_radps": 2
+    },
+    "allocator": {
+      "wheel_radius_m": 0.0686,
+      "track_width_m": 0.32634,
+      "max_wheel_angular_speed_radps": 40,
+      "longitudinal_speed_gain_N_per_mps": 180
+    }
+  }
+}

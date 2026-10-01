@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "generator": "tools/generate_fmuv6c_profile_registry.py",
+  "profile_count": 10,
+  "profiles": [
+    {
+      "profile_id": "generic-auv-fin",
+      "vehicle_type": "generic-auv-fin",
+      "mav_type": 12,
+      "source": "profiles/generic-auv-fin/vehicle-bundle.json",
+      "format": "vehicle_bundle",
+      "bytes": 2112,
+      "fingerprint": "DE16085064D430C9",
+      "sha256": "2a1923c1524e212b5702a8c0a64c17110f1f5a09cf8be89feffa39d89d3b34d8"
+    },
+    {
+      "profile_id": "EcaA9",
+      "vehicle_type": "EcaA9",
+      "mav_type": 12,
+      "source": "profiles/eca-a9/vehicle-bundle.json",
+      "format": "vehicle_bundle",
+      "bytes": 2127,
+      "fingerprint": "0BC02272A947E35B",
+      "sha256": "a2b50a76d9599aebf069c51f61042318500cd1e8e26fb613bd753d8c3d5e2897"
+    },
+    {
+      "profile_id": "LAUV",
+      "vehicle_type": "LAUV",
+      "mav_type": 12,
+      "source": "profiles/lauv/vehicle-bundle.json",
+      "format": "vehicle_bundle",
+      "bytes": 2083,
+      "fingerprint": "1F455CC8B70F1ADA",
+      "sha256": "9fa20699b5dcefe73a6b7237ed32be5ed3b918f2eddd1eabb23e1ec20f6a1034"
+    },
+    {
+      "profile_id": "DesistekSaga",
+      "vehicle_type": "DesistekSaga",
+      "mav_type": 12,
+      "source": "profiles/desistek-saga/vehicle-bundle.json",
+      "format": "vehicle_bundle",
+      "bytes": 1957,
+      "fingerprint": "E5E45BAE046153D4",
+      "sha256": "634e9a254df513316eb06fbd54996adddf31f5e7222574829d2b657bac4454db"
+    },
+    {
+      "profile_id": "RexROV2",
+      "vehicle_type": "RexROV2",
+      "mav_type": 12,
+      "source": "profiles/rexrov2/vehicle-bundle.json",
+      "format": "vehicle_bundle",
+      "bytes": 2784,
+      "fingerprint": "280541C2E9E15629",
+      "sha256": "fed2e397eeb66f86c5da4fd56c3de28442694cb638c444821f9b0868132997f3"
+    },
+    {
+      "profile_id": "VRX_WAMV",
+      "vehicle_type": "VRX_WAMV",
+      "mav_type": 11,
+      "source": "profiles/wamv/vehicle-bundle.json",
+      "format": "vehicle_bundle",
+      "bytes": 1348,
+      "fingerprint": "AED72AF5E1262247",
+      "sha256": "9bce52c15617cfd08960d2e2886dd8fd0d939d829231aa68b7d5f5fa8c6378df"
+    },
+    {
+      "profile_id": "X500",
+      "vehicle_type": "X500",
+      "mav_type": 2,
+      "source": "profiles/x500/vehicle-bundle.json",
+      "format": "vehicle_bundle",
+      "bytes": 1518,
+      "fingerprint": "2CDCFB735C80AB46",
+      "sha256": "f3c4ba551d3f7e491610657a06151beda354da85048209641e50800c9880a488"
+    },
+    {
+      "profile_id": "RCCessna",
+      "vehicle_type": "RCCessna",
+      "mav_type": 1,
+      "source": "profiles/rc-cessna/vehicle-bundle.json",
+      "format": "vehicle_bundle",
+      "bytes": 2216,
+      "fingerprint": "253F31132D892D43",
+      "sha256": "73169e5e8bd3acb6358fd90b2b499a049a403bb0115654dfba7771c9589d3adf"
+    },
+    {
+      "profile_id": "StandardVTOL",
+      "vehicle_type": "StandardVTOL",
+      "mav_type": 19,
+      "source": "profiles/standard-vtol/vehicle-bundle.json",
+      "format": "vehicle_bundle",
+      "bytes": 2000,
+      "fingerprint": "D19F10A8219D6A6D",
+      "sha256": "a13b2be31a9d8e6c4e53a9c738bc84b21084e0852d8b97979dcea18ca630eeda"
+    },
+    {
+      "profile_id": "R1Rover",
+      "vehicle_type": "R1Rover",
+      "mav_type": 10,
+      "source": "profiles/r1-rover/vehicle-bundle.json",
+      "format": "vehicle_bundle",
+      "bytes": 953,
+      "fingerprint": "C2B7F353154B0204",
+      "sha256": "30b725d87ac08f8a00dcfc571f33e0fb2890f1c282065e6097347fd09c14e311"
+    }
+  ]
+}

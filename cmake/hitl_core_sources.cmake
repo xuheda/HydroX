@@ -1,0 +1,42 @@
+# Shared core compiled into every HydroX HITL firmware integration.
+set(HYDROX_HITL_CORE_RELATIVE_SOURCES
+  src/geodesy.cpp
+  third_party/geographiclib-c/src/geodesic.cpp
+  src/mavlink_hil.cpp
+  src/runtime/hitl/mavlink_signing_disabled.cpp
+  src/estimation_profile.cpp
+  src/sensor_adapter.cpp
+  src/ekf.cpp
+  src/vehicle_bundle.cpp
+  src/runtime/hil_runtime.cpp
+  src/runtime/hil_session_config.cpp
+  src/runtime/hil_session_driver.cpp
+  src/runtime/hitl_supervisor.cpp
+  src/runtime/hitl_profile_registry.cpp
+  src/runtime/hitl_command_codec.cpp
+  src/safety/health_manager.cpp
+  src/safety/vehicle_supervisor.cpp
+  src/safety/command_arbiter.cpp
+  src/safety/vehicle_failsafe_navigator.cpp
+  src/safety/safety_profile.cpp
+  src/gnc/ref_model.cpp
+  src/gnc/depth_pid.cpp
+  src/gnc/pitch_pid.cpp
+  src/gnc/heading_smc.cpp
+  src/gnc/control_allocator.cpp
+  src/gnc/gnc_controller.cpp
+  src/gnc/thruster_allocator.cpp
+  src/gnc/thruster_controller.cpp
+  src/gnc/surface_allocator.cpp
+  src/gnc/surface_guidance.cpp
+  src/gnc/surface_controller.cpp
+  src/gnc/ground_allocator.cpp
+  src/gnc/ground_controller.cpp
+  src/gnc/multirotor_allocator.cpp
+  src/gnc/multirotor_controller.cpp
+  src/gnc/fixedwing_allocator.cpp
+  src/gnc/fixedwing_controller.cpp
+  src/gnc/vtol_allocator.cpp
+  src/gnc/vtol_controller.cpp
+  src/gnc/control_factory.cpp
+)

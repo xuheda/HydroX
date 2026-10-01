@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "component": {
+    "name": "HydroX",
+    "version": "0.1.0-dev"
+  },
+  "compatibility": {
+    "hil_session": 1,
+    "hitl_command": 2,
+    "xlog": "1.0",
+    "vehicle_bundle": "2.0",
+    "geodesy_contract": 1
+  },
+  "build_requirements": {
+    "cmake_minimum": "3.16",
+    "cpp_standard": 17
+  },
+  "build_targets": [
+    "host",
+    "pixhawk6c_hitl"
+  ],
+  "dependencies": {
+    "eigen": {
+      "version": "3.4.0",
+      "resolution": "vendored"
+    },
+    "micro_cdr": {
+      "version": "2.0.1",
+      "revision": "v2.0.1",
+      "resolution": "fetch_content"
+    },
+    "micro_xrce_dds_client": {
+      "version": "2.4.2",
+      "revision": "v2.4.2",
+      "resolution": "fetch_content"
+    },
+    "mavlink_c": {
+      "revision": "19f9955598af9a9181064619bd2e3c04bd2d848a",
+      "resolution": "fetch_content"
+    },
+    "geographiclib_c": {
+      "version": "2.2.0",
+      "resolution": "vendored"
+    },
+    "openssl": {
+      "version": "system",
+      "resolution": "system"
+    }
+  },
+  "dependency_locks": {
+    "nuttx": "third_party/nuttx.lock.json",
+    "arm_gnu_toolchain": "third_party/arm_gnu_toolchain.lock.json"
+  }
+}

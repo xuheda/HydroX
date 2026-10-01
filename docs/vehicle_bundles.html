@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VehicleBundle 控制契约 · HydroX 文档</title>
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <header class="site-header"><div class="site-header__inner"><a class="site-title" href="index.html">HydroX 文档</a></div></header>
+  <main><article><h1 id="vehiclebundle-控制契约">VehicleBundle 控制契约</h1>
+<p>更新日期：2026-09-25</p>
+<p><a href="index.html">返回首页</a> · <a href="sitl_hitl_parity.html">SITL/HITL 契约</a></p>
+<p>VehicleBundle 是 HydroX 唯一的运行时控制配置。仅支持 schema_version 字符串 <code>2.0</code>，不支持旧 schema、旧仿真参数文件或缺项回退。</p>
+<h2>配置放在哪里</h2>
+<p>全部 19 套配置位于 <code>profiles/&lt;车型&gt;/vehicle-bundle.json</code>，包括 EcaA9、LAUV（各含 test 版本）、DesistekSaga、RexROV2、BluffBodyROV、Otter、WAM-V、X500、RCCessna、StandardVTOL、R1Rover 及六套 generic 配置。</p>
+<pre>hydrox_sitl --vehicle-bundle profiles/eca-a9/vehicle-bundle.json
+hydrox_control_shadow --vehicle-bundle profiles/eca-a9/vehicle-bundle.json --xlog flight.xlog --output report.csv</pre>
+<p><code>--vehicle-params</code> 和 <code>--vehicle-params-dir</code> 已删除。OceanX 的 vehicle profile 必须用 <code>control_bundle</code> 显式引用文件，不能靠 vehicle_type 猜测控制参数。</p>
+<h2>Schema 2.0</h2>
+<p>根字段为 schema_version、id、control_contract、archetype、vehicle_class、control_model。多推进器构型还必须声明 actuator_layout。完整可运行示例请直接使用 profiles 中的文件；下列路径是结构说明，不是可省略字段的模板。</p>
+<ul>
+<li><code>control_contract</code> 必须为 <code>hydrox.control/&lt;archetype&gt;@2</code>。</li>
+<li>archetype：slender_body_fin、thruster、surface、multirotor、fixed_wing、vtol、differential_drive。</li>
+<li>vehicle_class 分别为 uuv、uuv、usv、uav_multirotor、uav_fixed_wing、uav_vtol、ugv_differential。</li>
+<li><code>control_model.mass_kg</code> 是各构型的控制质量估计量；<code>pitch_inertia_kg_m2</code> 仅属于尾舵式 AUV，其他构型不接受此字段。motor 提供运行时电机模型参数。</li>
+<li>VTOL 必须分别配置 <code>elevator_gain_inv_Nm</code>、<code>aileron_gain_inv_Nm</code>、<code>rudder_gain_inv_Nm</code>；零表示关闭对应舵面控制，负数无效。不再接受共享 <code>surface_gain_inv_Nm</code> 或负数回退约定。</li>
+<li><code>control_model.controller</code> 包含该构型全部控制参数；fin 下分 depth、pitch、heading、surge、yaw_rate、turn_speed，其他构型为直接参数对象。</li>
+<li><code>control_model.allocator</code> 包含 fin / fixed_wing / vtol / differential_drive 的分配参数。尾舵安装角使用 allocator.fin_angles_deg，长度固定为 4。</li>
+<li>surface 直接声明 channel_surge_limit_n 和 channel_lever_arm_m；升力载具直接声明总升力和力臂；不会在加载时从机型名推算。</li>
+<li>thruster 的 actuator_layout.kind 为 thrusters 或 body_wrench。前者每项必须提供 position_m、direction_body（FRD 三维向量）、max_thrust_n，最多 8 路。</li>
+</ul>
+<p>参数使用 SI 单位，明确带 deg、rpm 的字段除外。完整必填字段由 <code>include/control_parameter_fields.h</code> 定义。重复的质量和 VTOL 升力分配参数不在 controller/allocator 内再次存储。</p>
+<h2>边界与验证</h2>
+<p>Bundle 只属于飞控。仿真器保留视觉资源、碰撞、完整水动力/气动力/地面动力学；板卡保留输出引脚映射。OceanX 物理模型文件已删除冗余 control 段，修改物理模型不会自动覆盖已标定的控制参数。</p>
+<p>必填字段缺失、未知或不适用字段、类型错误、重复 JSON 键、非有限数、版本/控制契约不匹配均拒绝加载。正质量、推力、力臂等必要约束也参与验证；欠驱动推进器布局报告警告，不虚构不存在的自由度。</p>
+<p>所有有效增益均显式存储，不再执行旧的惯量增益缩放。test_vehicle_bundle 保存迁移前有效参数和确定性控制输出，用于验证 19 套配置未改变原有控制结果；test_hitl_profile_registry 对比文件加载和固件内嵌同一配置的输出与布局。</p>
+<h2>固件更新</h2>
+<p>FMUv6C 目前编译 10 套配置，均由 <code>tools/generate_fmuv6c_profile_registry.py</code> 从 Bundle 生成。运行 <code>--check</code> 可检测生成文件是否过期。注册表使用原始文件字节指纹，配置变化后必须重新生成并构建、刷写固件。旧指纹不能继续接入新配置。</p>
+<p>本次迁移不改变安全策略，也不意味着每款载具已通过真实硬件或闭环航行验证。</p></article></main>
+</body>
+</html>

@@ -1,0 +1,100 @@
+{
+  "schema_version": "2.0",
+  "id": "EcaA9",
+  "control_contract": "hydrox.control/slender_body_fin@2",
+  "archetype": "slender_body_fin",
+  "vehicle_class": "uuv",
+  "control_model": {
+    "mass_kg": 71.52145684931449,
+    "pitch_inertia_kg_m2": 25.689831625622574,
+    "motor": {
+      "tau_m": 0.1,
+      "KT_0": 0.4566,
+      "KQ_0": 0.07,
+      "D_prop": 0.17,
+      "rho": 1027,
+      "eta_motor": 0.85,
+      "V_bat": 24,
+      "rpm_max": 3779.644730092272
+    },
+    "controller": {
+      "depth": {
+        "kp": 0.1,
+        "kd": 0.32,
+        "ki": 0.002,
+        "wn": 0.32,
+        "zeta": 1.15,
+        "vmax": 0.3,
+        "ei_max": 2,
+        "theta_max": 0.1
+      },
+      "pitch": {
+        "kp": 85,
+        "kd": 75,
+        "ki": 0,
+        "ei_max": 0.6,
+        "tau_max": 55
+      },
+      "heading": {
+        "T": 1,
+        "K": 0.4,
+        "wn": 0.8,
+        "zeta": 1,
+        "vmax": 0.45,
+        "kd": 1.2,
+        "ks": 4,
+        "phi_b": 0.15,
+        "ei_max": 1.5
+      },
+      "surge": {
+        "kp": 260,
+        "ki": 15,
+        "kd": 18,
+        "integral_limit": 4,
+        "unwind_gain": 6,
+        "drag_ff": 28,
+        "tau_max": 0,
+        "forward_min_tau": 70,
+        "tau_rate_limit": 1200,
+        "overspeed_deadband": 0.05,
+        "overspeed_brake_gain": 350,
+        "overspeed_brake_tau_max": 450
+      },
+      "yaw_rate": {
+        "kp": 120,
+        "ki": 2,
+        "kd": 100,
+        "ei_max": 0.2,
+        "tau_max": 220,
+        "command_gain": 1,
+        "feed_forward": 170,
+        "ref_filter_tau": 0.18,
+        "ref_slew_limit": 1
+      },
+      "turn_speed": {
+        "drop_start_radps": 0,
+        "drop_gain_mps_per_radps": 0,
+        "drop_max_mps": 0
+      }
+    },
+    "allocator": {
+      "rho": 1027,
+      "S_fin": 0.04155,
+      "CL_s": 13.98,
+      "CL_r": 13.98,
+      "x_fin": 0.708,
+      "D_prop": 0.17,
+      "KT_0": 0.4566,
+      "n_max_rpm": 3779.644730092272,
+      "max_thrust_N": 700,
+      "delta_max_deg": 80,
+      "u_min": 0.3,
+      "fin_angles_deg": [
+        315,
+        45,
+        135,
+        225
+      ]
+    }
+  }
+}

@@ -1,0 +1,74 @@
+# Build outputs
+build_*/
+build/
+/tmp/
+*.exe
+*.pdb
+*.ilk
+*.obj
+*.o
+*.elf
+*.bin
+*.map
+
+# Local secrets and certificates
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+credentials*
+secrets*
+
+# Runtime logs
+*.log
+*.xlog
+
+# Temporary patch and merge files
+*.orig
+*.rej
+codex_*.patch
+
+# Python
+__pycache__/
+*.py[cod]
+# Training/evaluation implementations stay local; retain configs and docs.
+/learning/**/*.py
+
+cmake_install.cmake
+CMakeCache.txt
+CMakeFiles/
+
+# IDE
+.vs/
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# third_party (must be cloned separately)
+third_party/eigen/
+third_party/nuttx/
+third_party/nuttx-apps/
+third_party/toolchains/
+
+# Localized README (Chinese version is not uploaded)
+README_CN.md
+
+# Local paper sources and generated learning artifacts
+/ieeeconf/
+/learning/datasets/
+/learning/export/
+/learning/evaluation/ecaa9_control_shadow_v1/
+/learning/**/*.npz
+/learning/**/*.pkl
+/learning/**/*.pt
+/learning/**/*.zip
+/learning/**/*.csv
+/learning/**/*.jsonl
+/learning/**/*.png
+/learning/**/*_report.json

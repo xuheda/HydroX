@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "name": "Arm GNU Toolchain",
+  "version": "13.3.Rel1",
+  "target": "arm-none-eabi",
+  "host": "mingw-w64-i686",
+  "license": "GPL-3.0-or-later WITH GCC-exception-3.1",
+  "url": "https://developer.arm.com/-/media/Files/downloads/gnu/13.3.rel1/binrel/arm-gnu-toolchain-13.3.rel1-mingw-w64-i686-arm-none-eabi.zip",
+  "sha256": "e46fda043c0ce83582bc8db4b3ef85f77f4beb7333344c2f4193c17e1167a095",
+  "archive_root": "arm-gnu-toolchain-13.3.rel1-mingw-w64-i686-arm-none-eabi",
+  "destination": "third_party/toolchains/arm-gnu-toolchain-13.3.rel1-mingw-w64-i686-arm-none-eabi"
+}

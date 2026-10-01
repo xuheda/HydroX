@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SITL / HITL 一致性契约 · HydroX 文档</title>
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <header class="site-header"><div class="site-header__inner"><a class="site-title" href="index.html">HydroX 文档</a></div></header>
+  <main><article>
+    <h1>SITL / HITL 一致性契约</h1>
+    <p>更新日期：2026-09-19</p>
+    <p><a href="index.html">返回 HydroX 文档首页</a> · <a href="../../doc/internal/software_hardware_in_the_loop_roadmap.html">OceanX HITL 路线与台架</a> · <a href="../../doc/internal/hitl_bench_setup.html">真实飞控台架操作手册</a></p>
+    <p>本文是 HydroX 软件在环与硬件在环行为对齐的权威说明。目标是让两种部署只在平台和传输边界上不同，估计、控制、权限和故障语义保持一致。</p>
+
+    <h2>共享控制链</h2>
+    <p>SITL 与 HITL 都执行同一个 <code>runtime::HilSessionDriver</code> 和 <code>runtime::HilRuntime</code>：前者统一连接 generation、传感器时间戳 epoch、暂停/恢复、维护与撤权后的输出要求，后者统一 <code>EKF → feedback selection → GNC → allocator → arming/failsafe</code>。SITL 额外提供 TCP、DDS、QGC、XLog 和可选实验服务；HITL 使用 NuttX clock、serial <code>ByteStream</code>、硬件 watchdog，并禁止物理执行器输出。这些平台差异不得复制或改写会话或控制语义。</p>
+    <table>
+      <thead><tr><th>契约</th><th>统一值/规则</th><th>实现位置</th></tr></thead>
+      <tbody>
+        <tr><td>标称控制周期</td><td>Session V1 参数；默认 <code>0.01 s / 100 Hz</code></td><td><code>hil_session_config</code></td></tr>
+        <tr><td>最大传感器步长</td><td>Session V1 参数；默认 <code>0.25 s</code></td><td><code>hil_session_config</code></td></tr>
+        <tr><td>传感器超时</td><td>Session V1 参数；默认 <code>500 ms</code></td><td><code>hil_session_config</code></td></tr>
+        <tr><td>外部 setpoint 超时</td><td>Session V1 参数；默认 <code>500 ms</code></td><td><code>hil_session_config</code></td></tr>
+        <tr><td>算法时间</td><td>由严格递增的 HIL measurement timestamp 驱动</td><td><code>HilRuntime</code></td></tr>
+        <tr><td>权限时间</td><td>由 Host/NuttX 平台单调时钟驱动</td><td><code>ControlSessionGate</code></td></tr>
+        <tr><td>安全输出时机</td><td>暂停、仿真链路断线、传感器超时或不安全时间跳变时禁止输出；外部命令失效由统一安全管理器保留板载保护授权，不统一发送零推力</td><td><code>HilSessionDriver</code></td></tr>
+      </tbody>
+    </table>
+
+    <h2>多域保护的当前发布差异</h2>
+    <p>SITL 与 FMUv6C 均强制使用 <code>VehicleSupervisor → VehicleFailsafeNavigator → CommandArbiter</code> 生成并授权参考；旧旁路和 Shadow/Active 启用开关已删除。硬件输出禁止仍保留，代码统一不等于真机台架验收完成。</p>
+    <p>AUV/ROV 受控上浮，USV 停车后在定位可用时守位，地面车制动；多旋翼及悬停 VTOL 保持，固定翼和巡航 VTOL 盘旋。空中不自动返航、不自动降落。VTOL 前/后转换受控恢复悬停，切换来源不重置实际阶段。详见 <a href="../src/safety/README.md">策略与验证边界</a>。</p>
+    <p>地理保持需要最近 3 s 内 EKF 接受的水平位置观测，垂向控制需要最近 1 s 内接受的垂向观测；接收窗口使用平台单调时间。无定位时降级控制，不伪称定点；完全失去控制所需垂向观测或状态非有限时禁止输出。输出禁止不等于物理安全恢复。</p>
+    <h2>Setpoint 数据契约</h2>
+    <p>SITL 的 DDS CDR 输入和 HITL 的 companion command frame 在映射为 <code>GNCSetpoint</code> 后都调用 <code>valid_gnc_setpoint()</code>。最终运行时还会再次验证，任何入口都不能绕过该检查。</p>
+    <table>
+      <thead><tr><th>字段</th><th>入口 sanity 上限</th></tr></thead>
+      <tbody>
+        <tr><td>depth / down</td><td>绝对值不超过 <code>12000 m</code></td></tr>
+        <tr><td>heading</td><td>绝对值不超过 <code>1000 rad</code></td></tr>
+        <tr><td>surge speed</td><td>绝对值不超过 <code>100 m/s</code></td></tr>
+        <tr><td>yaw rate</td><td>绝对值不超过 <code>100 rad/s</code></td></tr>
+        <tr><td>waypoint north/east</td><td>绝对值不超过 <code>10,000,000 m</code></td></tr>
+      </tbody>
+    </table>
+    <p>允许模式为 <code>DISABLED</code>、<code>DEPTH_HOLD</code>、<code>WAYPOINT_3D</code>、<code>DP</code> 和 <code>SURFACE</code>。这是协议枚举集合，不代表每种构型都支持：空中/地面拒绝 SURFACE，DP 只接受推进器式 UUV。上述值是拒绝损坏数据的协议上限，不是车辆允许运行包线；实际任务仍受 controller、allocator 和载具配置限制。DDS 使用 double，板端 command frame 使用 float32，因此线级精度不同，但有效性和安全语义一致。</p>
+
+    <h2>连接、暂停与恢复</h2>
+    <table>
+      <thead><tr><th>事件</th><th>统一行为</th></tr></thead>
+      <tbody>
+        <tr><td>新连接</td><td>创建新 generation，清除旧命令；先收到本代有效传感器，再接受新命令。</td></tr>
+        <tr><td>断线</td><td>立即撤销 actuator authority，进入安全输出。</td></tr>
+        <tr><td>仿真暂停</td><td>立即撤销命令并输出零值/unarmed 控制，不等待超时。</td></tr>
+        <tr><td>仿真恢复</td><td>创建新 generation；保留估计器内部状态，但必须重新收到传感器和之后的新命令。</td></tr>
+        <tr><td>外部命令超时/释放</td><td>两端均短时 CommandHold 后锁存并按构型保护；明确释放可直接 Stabilize。接管期间传感器超时仍会触发输出禁止。</td></tr>
+        <tr><td>传感器超时</td><td>撤销输出授权并锁存；旧样本不能跨 generation 恢复控制。</td></tr>
+        <tr><td>可控保护态显式接管</td><td>新鲜参考、传感器和导航满足条件后调用 resume_external_control；SITL GCS 对应 DO_PAUSE_CONTINUE(param1=1)，不先 disarm。</td></tr>
+      </tbody>
+    </table>
+    <p>OceanX UE bridge 采用相同的 connection generation 和 sensor-ready 门控，并校验 MAVLink CRC、HIL enabled、armed、heartbeat 与 actuator freshness。</p>
+
+    <h2>车辆配置一致性</h2>
+    <p><code>VehicleClass</code> 必须与 <code>VehicleArchetype</code> 匹配；UUV、USV、multirotor、fixed-wing、VTOL 和 differential-drive 均由共享验证函数检查。生成的 FMUv6C 注册表当前包含十个 profile：<code>generic-auv-fin</code>、<code>EcaA9</code>、<code>LAUV</code>、<code>DesistekSaga</code>、<code>RexROV2</code>、<code>VRX_WAMV</code>、<code>X500</code>、<code>RCCessna</code>、<code>StandardVTOL</code> 和 <code>R1Rover</code>。每个 OceanX 载具 profile 用 <code>hitl_profile_id</code> 绑定其中一项；R1Rover 的 SITL 与固件统一读取同一个 vehicle bundle。</p>
+    <p><code>tools/hitl_bench.ps1</code> schema 2.0 按场景载具逐一重算精确字节 FNV-1a、SHA-256 和长度，校验注册表、bundle 与显式 HITL 动力学契约，再向每个 Router 传入各自的 ID/指纹。Router 在连接 UE 前向板端发送带 nonce 的 profile selection；板端只有在精确匹配或成功切换到已编译 profile 后才返回 READY。异构载具不再共享一个全局 profile 假设；修改任一已编译 profile 后仍必须重新生成注册表并重刷固件。</p>
+
+    <h2>Profile 与 Session 配置契约</h2>
+    <p><strong>Profile</strong> 只拥有车辆类别、控制器、分配器、电机、估计器调参与传感器标定；<strong>Session</strong> 只拥有本次运行的初始 NED 状态、GPS 原点、周期/超时、任务半径、加速度模式和反馈策略。Setpoint、模式和 Arm 属于运行时命令；COM/TCP、DDS、QGC 与日志路径属于平台部署参数。各字段不得跨层静默覆盖。</p>
+    <p><code>HilSessionConfigV1</code> 使用 76 字节固定顺序、小端、定点 canonical payload。距离使用毫米，经纬度使用 <code>deg × 1e7</code>，角度使用微弧度，时间使用微秒。身份为 <code>SHA-256("OceanX/HIL_SESSION_CONFIG/V1" + profile_fingerprint + canonical_payload)</code>；nonce 只绑定本次握手，不进入稳定配置身份。</p>
+    <p>启动顺序固定为 <code>PROFILE_SELECT → PROFILE_READY → HIL_SESSION_CONFIG → HIL_SESSION_STATUS/READY → UE bridge</code>。Session Config 使用自定义 MAVLink 消息 11067，状态使用 11068；旧固件忽略新消息后 Router 超时并拒绝开放 UE，不允许静默使用板端默认值。板端将新配置暂存后先撤权、发送安全输出并销毁旧 runtime epoch，再由入口重新构造 SensorAdapter、EKF、Controller、Allocator、HilRuntime 和 HilSessionDriver；只有新实例可以发送 Session READY。</p>
+    <p>SITL 与 HITL 最终都调用 <code>resolve_hil_session_config()</code> 和 <code>apply_hil_session_config()</code>。HITL 场景中的 <code>vehicles[].location</code>（NED 米）、<code>rotation</code>（RPY 度）和可选一次性初速提供初始状态；周期、超时、GPS 原点和策略来自独立的 <code>configs/hitl_sessions/*.json</code>，由台架 <code>session_profile</code> 选择，启动器将两者合并为线上 Session Config。Release 板端拒绝 <code>truth_debug</code>、truth heading aid 以及尚未具有 Profile capability 声明的非零 sensor mask。</p>
+
+    <h2>控制轨迹与 XLog 统一</h2>
+    <p>SITL 记录器和 HITL Router 现在写入同一套 XLog topic：<code>Setpoint</code>、<code>Timing</code>、<code>ControllerOutput</code>、<code>Actuator</code> 和带提交标记的 <code>State</code>。两种来源都携带 Profile ID、精确 fingerprint、canonical Session payload 与 session digest；因此同一个 <code>control_shadow</code> 可以对 SITL 和 HITL 日志执行相同的控制器/分配器重放与逐 tick 对比。XLog Reader 对 CRC、schema、序号、分段身份和截断尾块执行同样的严格/恢复策略。</p>
+    <p>HITL 的板端通过 MAVLink <code>HIL_CONTROL_TRACE</code>（消息 ID <code>11070</code>）在每个有效控制 tick 发送完整输入快照：测量时间、状态、Setpoint、控制输出、Setpoint 年龄、模式、mission、权限/撤权、reset、DVL/EKF 来源和 truth 使用标记；随后 Router 将同 tick 的标准 <code>HIL_ACTUATOR_CONTROLS</code> 合并到 XLog。这样串口传输不会改变 SITL 的回放边界。Release HITL 不产生 simulator truth，<code>used_truth</code> 必须为 false；若调试构建启用 truth，仅可作为诊断字段，不能成为控制输入。</p>
+    <p>Router 支持 <code>--xlog auto|&lt;path&gt;</code> 和 <code>--stop-file &lt;path&gt;</code>。台架默认使用每车独立的 <code>control-*.xlog</code>，收到停止请求后先停止发命令、刷新 footer 和统计，再退出；缺少或损坏日志会让本次采集失败，不得被静默视为成功。</p>
+
+    <h2>固件构建边界</h2>
+    <p>所有 HITL 固件入口共用 <code>cmake/hitl_core_sources.cmake</code>，避免独立 CMake 目标与 NuttX external 应用漏编不同控制器或编解码器。实际 FMUv6C / Pixhawk 6C Mini 集成位于 <code>boards/fmu_v6c</code> 和 <code>nuttx_apps/external/hydrox_hitl</code>，包含 NuttX defconfig、UART DMA、IWDG、早期 PWM 输出抑制和 PX4 制品打包定义。</p>
+    <p><code>build_pixhawk6c_hitl.bat</code> 已转接当前 FMUv6C NuttX external 构建；旧独立 BSP 占位入口已删除，独立 CMake 构建仅支持 <code>HYDROX_TARGET=HOST</code>。现用 FMUv6C 路径仍需完成 6C Mini 实板 bootloader 传输、回滚和台架验证。</p>
+
+    <h2>历史验证记录（2026-09-19）</h2>
+    <p>以下记录对应 HydroX <code>df7d033</code> / OceanX <code>a297313f3</code>，不是当前工作树的重新测试结果：Release 构建成功，历史构建中的 52/52 CTest 通过，包含新增七构型保护、ROV 向上推力、VTOL 阶段/运行时接管、导航降级与显式恢复测试。当前 PC 构建注册 54 项 CTest。存在第三方 MAVLink 浮点转换编译警告，不能标为零警告。多旋翼案例使用估计反馈；VTOL 接管案例使用显式 truth_debug，不代表全机型 Unreal 实航或真机验证。</p>
+    <h2>既有验证记录（非本轮重新执行）</h2>
+    <ul>
+      <li>以下为原 2026-09-07 文档归档记录；不扩大本轮保护验证结论。</li>
+      <li>当前 PC 构建注册 54 项 CTest；历史归档可能使用不同的测试数量，验证结论以对应构建输出为准。</li>
+      <li>OceanX Unreal 自动化通过：<code>OceanX.Dynamics</code> 22/22、<code>ScenarioSpawner</code> 2/2、<code>BuiltInProfiles</code> 1/1。</li>
+      <li>ROS 2 六个运行包构建通过；测试汇总为 58 tests、0 errors、0 failures、4 skipped。</li>
+      <li>共享 HITL 源码清单通过 CMake 语法和文件存在性检查。</li><li><code>hydrox_hitl_router</code> Release 零警告构建通过；载具标签、connection generation 与双向 MAVLink 帧/字节日志已进入制品。</li><li>本机 <code>Validate -AllowMissingHardware</code> 和 Dry Run 通过，静态 profile/plant/场景/端口一致；当前未检测到真实 USB 飞控。</li>
+      <li><code>GenericAuvFinHitl</code> 软件闭环已在同一 plant/bundle/control 契约下完成：最小航点距离 4.65 m、truth 垂向 RMS 0.10 m、速度 MAE 0.20 m/s；该结果不替代实体板时序、串口和 IO 验证。</li>
+      <li>固定 NuttX 13.0.0 + Arm GNU 13.3.Rel1 交叉编译、链接/向量/HEX/PX4 静态校验已通过；尚未完成 Pixhawk 6C Mini 实板烧录、UART/DMA 压测和真实台架长稳验证。</li>
+    </ul>
+
+    <h2>已知且保留的差异</h2>
+    <table>
+      <thead><tr><th>差异</th><th>原因与后续动作</th></tr></thead>
+      <tbody>
+        <tr><td>SITL 可在运行前直接读取 profile JSON；板端 profile 注册表编译进固件</td><td>台架已按载具选择并做运行时精确握手，但 profile 内容变化仍需重新生成注册表、构建并刷写固件。</td></tr>
+        <tr><td>SITL 由进程参数适配器读取 Session；HITL 由 Bench 场景适配器读取 Session</td><td>外部载入方式保留平台差异，但两者必须进入同一 resolver/mapping；HITL 额外通过 profile-bound SHA-256 与 nonce 做板端确认。</td></tr>
+        <tr><td>DDS double；companion frame float32</td><td>保留传输精度差异，持续共用校验和单位。</td></tr>
+        <tr><td>PC 支持 DDS、QGC、XLog、MAVLink signing；嵌入式不全部启用</td><td>这些是平台服务；嵌入式签名需安全密钥存储后才能启用。</td></tr>
+        <tr><td>硬件调度、串口、watchdog 和 bootloader</td><td>交叉构建只覆盖静态边界；实际传输、时序和故障行为仍只能由实机台架验证，不能由主机单元测试替代。</td></tr>
+      </tbody>
+    </table>
+  </article></main>
+</body>
+</html>

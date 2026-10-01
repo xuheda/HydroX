@@ -1,0 +1,50 @@
+{
+  "schema_version": "2.0",
+  "id": "generic-usv-twin-prop",
+  "control_contract": "hydrox.control/surface@2",
+  "archetype": "surface",
+  "vehicle_class": "usv",
+  "control_model": {
+    "mass_kg": 90,
+    "motor": {
+      "tau_m": 0.2,
+      "KT_0": 0.4566,
+      "KQ_0": 0.06,
+      "D_prop": 0.14,
+      "rho": 1028,
+      "eta_motor": 0.85,
+      "V_bat": 24,
+      "rpm_max": 1525
+    },
+    "max_thrust_per_actuator_n": 150,
+    "channel_surge_limit_n": 150,
+    "channel_lever_arm_m": 0.55,
+    "controller": {
+      "surge_kp": 260,
+      "surge_kd": 95,
+      "surge_accel_filter_tau_s": 0.2,
+      "surge_ki": 0,
+      "surge_integral_limit": 0,
+      "surge_drag_linear_N_per_mps": 0,
+      "surge_drag_quadratic_N_per_mps2": 0,
+      "max_brake_force_N": 0,
+      "surge_feedback_force_limit_N": 0,
+      "yaw_kp": 140,
+      "yaw_kd": 65,
+      "max_yaw_rate_radps": 0.45,
+      "max_force_N": 300,
+      "max_moment_Nm": 165,
+      "waypoint_surge_mps": 2,
+      "station_keep_surge_mps": 0.5,
+      "station_keep_hysteresis_m": 1,
+      "los_lookahead_m": 12,
+      "ilos_integral_gain": 0.015,
+      "ilos_integral_limit": 75,
+      "sideslip_compensation_gain": 0,
+      "sideslip_filter_time_constant_s": 1,
+      "max_crab_angle_rad": 0.35,
+      "max_accel_mps2": 0.45,
+      "max_decel_mps2": 0.7
+    }
+  }
+}

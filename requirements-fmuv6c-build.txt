@@ -1,0 +1,2 @@
+# Required by the Apache NuttX Kconfig/CMake front end.
+kconfiglib==14.1.0

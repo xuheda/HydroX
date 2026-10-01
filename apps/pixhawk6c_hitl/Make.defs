@@ -1,0 +1,3 @@
+ifneq ($(CONFIG_HYDROX_PIXHAWK6C_HITL),)
+CONFIGURED_APPS += $(APPDIR)/pixhawk6c_hitl
+endif

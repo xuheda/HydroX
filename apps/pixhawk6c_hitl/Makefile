@@ -1,0 +1,11 @@
+include $(APPDIR)/Make.defs
+
+PROGNAME  = hydrox_hitl
+PRIORITY  = $(CONFIG_HYDROX_HITL_PRIORITY)
+STACKSIZE = $(CONFIG_HYDROX_HITL_STACKSIZE)
+MODULE    = $(CONFIG_HYDROX_PIXHAWK6C_HITL)
+
+CXXEXT  = .cpp
+MAINSRC = main.cpp
+
+include $(APPDIR)/Application.mk

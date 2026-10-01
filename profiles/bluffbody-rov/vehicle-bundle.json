@@ -1,0 +1,68 @@
+{
+  "schema_version": "2.0",
+  "id": "BluffBodyROV",
+  "control_contract": "hydrox.control/thruster@2",
+  "archetype": "thruster",
+  "vehicle_class": "uuv",
+  "control_model": {
+    "mass_kg": 11.5,
+    "motor": {
+      "tau_m": 0.2,
+      "KT_0": 0.4566,
+      "KQ_0": 0.06,
+      "D_prop": 0.14,
+      "rho": 1028,
+      "eta_motor": 0.85,
+      "V_bat": 24,
+      "rpm_max": 1525
+    },
+    "max_thrust_per_actuator_n": 28.75,
+    "controller": {
+      "surge": {
+        "kp": 0.6,
+        "ki": 0.3,
+        "kd": 0.8,
+        "integral_limit": 1.5,
+        "accel_max": 2
+      },
+      "sway": {
+        "kp": 0.6,
+        "ki": 0,
+        "kd": 0.5,
+        "integral_limit": 0,
+        "accel_max": 1
+      },
+      "heave": {
+        "kp": 0.6,
+        "ki": 0,
+        "kd": 1.6,
+        "integral_limit": 0,
+        "accel_max": 3
+      },
+      "roll": {
+        "kp": 0.8,
+        "ki": 0,
+        "kd": 1.2,
+        "integral_limit": 0,
+        "accel_max": 1
+      },
+      "pitch": {
+        "kp": 0.8,
+        "ki": 0,
+        "kd": 1.2,
+        "integral_limit": 0,
+        "accel_max": 1
+      },
+      "yaw": {
+        "kp": 1,
+        "ki": 0,
+        "kd": 1.2,
+        "integral_limit": 0,
+        "accel_max": 2
+      }
+    }
+  },
+  "actuator_layout": {
+    "kind": "body_wrench"
+  }
+}

@@ -1,0 +1,109 @@
+{
+  "schema_version": "2.0",
+  "id": "DesistekSaga",
+  "control_contract": "hydrox.control/thruster@2",
+  "archetype": "thruster",
+  "vehicle_class": "uuv",
+  "control_model": {
+    "mass_kg": 10,
+    "motor": {
+      "tau_m": 0.2,
+      "KT_0": 0.4566,
+      "KQ_0": 0.06,
+      "D_prop": 0.14,
+      "rho": 1028,
+      "eta_motor": 0.85,
+      "V_bat": 24,
+      "rpm_max": 1525
+    },
+    "max_thrust_per_actuator_n": 20,
+    "controller": {
+      "surge": {
+        "kp": 0.75,
+        "ki": 0.8,
+        "kd": 1.15,
+        "integral_limit": 1.5,
+        "accel_max": 1.2
+      },
+      "sway": {
+        "kp": 0,
+        "ki": 0,
+        "kd": 0,
+        "integral_limit": 0,
+        "accel_max": 0
+      },
+      "heave": {
+        "kp": 0.55,
+        "ki": 0,
+        "kd": 1.25,
+        "integral_limit": 0,
+        "accel_max": 1
+      },
+      "roll": {
+        "kp": 0,
+        "ki": 0,
+        "kd": 0,
+        "integral_limit": 0,
+        "accel_max": 0
+      },
+      "pitch": {
+        "kp": 0,
+        "ki": 0,
+        "kd": 0,
+        "integral_limit": 0,
+        "accel_max": 0
+      },
+      "yaw": {
+        "kp": 0.65,
+        "ki": 0,
+        "kd": 1.1,
+        "integral_limit": 0,
+        "accel_max": 0.45
+      }
+    }
+  },
+  "actuator_layout": {
+    "kind": "thrusters",
+    "thrusters": [
+      {
+        "position_m": [
+          -0.088,
+          0.1192,
+          0.00618
+        ],
+        "direction_body": [
+          -1,
+          0,
+          0
+        ],
+        "max_thrust_n": 20
+      },
+      {
+        "position_m": [
+          -0.088,
+          -0.1192,
+          0.00618
+        ],
+        "direction_body": [
+          -1,
+          0,
+          0
+        ],
+        "max_thrust_n": 20
+      },
+      {
+        "position_m": [
+          0.067,
+          0,
+          -0.12582
+        ],
+        "direction_body": [
+          0,
+          0,
+          1
+        ],
+        "max_thrust_n": 20
+      }
+    ]
+  }
+}
